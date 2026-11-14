@@ -279,6 +279,10 @@ def _attributes(
         attrs["error_message"] = raw["errorMessage"]
     if params.get("policyArn"):
         attrs["policy_arn"] = params["policyArn"]
+    if name == "AddUserToGroup" and params.get("groupName"):
+        attrs["group_name"] = params["groupName"]
+    if name in ("PutUserPolicy", "PutRolePolicy", "PutGroupPolicy") and params.get("policyName"):
+        attrs["policy_name"] = params["policyName"]
 
     if name == "CreateAccessKey":
         created = (response.get("accessKey") or {}).get("accessKeyId")
@@ -290,6 +294,12 @@ def _attributes(
         issued = (response.get("credentials") or {}).get("accessKeyId")
         if issued:
             attrs["issued_access_key_id"] = issued
+
+    if name == "RunInstances":
+        items = (response.get("instancesSet") or {}).get("items") or []
+        attrs["instance_count"] = len(items) or int(params.get("maxCount") or 1)
+        attrs["instance_type"] = params.get("instanceType")
+        attrs["instance_ids"] = [i["instanceId"] for i in items if i.get("instanceId")]
 
     if name.startswith(("AuthorizeSecurityGroup", "RevokeSecurityGroup")):
         cidrs, ports = _ip_permissions(params)

@@ -4,12 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import events, health
+from app.api import analysis, dashboard, events, health, incidents, response
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.database.session import create_engine_from_url, create_session_factory, init_db
 from app.evidence.store import build_evidence_store
+from app.services.analysis import AnalysisService
 from app.services.ingestion import IngestionService
+from app.services.models_registry import ModelRegistry
+from app.services.response import ResponseService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -20,13 +23,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     init_db(engine)
     session_factory = create_session_factory(engine)
     evidence_store = build_evidence_store(settings)
+    registry = ModelRegistry(settings)
 
     app = FastAPI(title="CloudShield API", version=__version__)
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.evidence_store = evidence_store
+    app.state.registry = registry
     app.state.ingestion = IngestionService(session_factory, evidence_store)
+    app.state.analysis = AnalysisService(session_factory, settings, registry)
+    app.state.response = ResponseService(session_factory, settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -34,6 +41,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(health.router)
-    app.include_router(events.router)
+    for module in (health, events, analysis, incidents, response, dashboard):
+        app.include_router(module.router)
     return app

@@ -29,6 +29,24 @@ class Settings(BaseSettings):
     collector_overlap_minutes: int = 15
 
     max_ingest_batch: int = 5000
+
+    # ---- ML / analysis ----
+    model_dir: str = "./data/models"
+    reports_dir: str = "./data/reports"
+    window_minutes: int = 15
+    attack_probability_threshold: float = 0.5
+    anomaly_alert_threshold: float = 0.995
+    correlation_threshold: float = 0.4
+    history_lookback_days: int = 14
+    baseline_warmup_hours: int = 24
+
+    # ---- response ----
+    # dry_run records the exact API call without sending it; live requires a write-scoped profile.
+    response_mode: Literal["dry_run", "live"] = "dry_run"
+    responder_profile: str | None = None
+
+    # ---- demo ----
+    enable_simulation: bool = True
     cors_origins: list[str] = ["http://localhost:5173"]
 
 

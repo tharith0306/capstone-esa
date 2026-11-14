@@ -1,0 +1,113 @@
+[
+  {
+    "scenario_id": "SCN-2026-000",
+    "kind": "resource_abuse",
+    "victim": "analyst-03",
+    "attacker_ip": "203.0.113.18",
+    "start": "2026-10-04T04:30:48.090751+00:00",
+    "end": "2026-10-04T08:48:39.598662+00:00",
+    "stealthy": false,
+    "stages": [
+      "IMPACT",
+      "INITIAL_ACCESS"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-001",
+    "kind": "full_chain",
+    "victim": "dev-08",
+    "attacker_ip": "198.51.100.10",
+    "start": "2026-10-06T10:37:36.707480+00:00",
+    "end": "2026-10-06T23:14:23.022946+00:00",
+    "stealthy": true,
+    "stages": [
+      "DEFENSE_EVASION",
+      "DISCOVERY",
+      "EXFILTRATION",
+      "INITIAL_ACCESS",
+      "PERSISTENCE",
+      "PRIVILEGE_ESCALATION"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-002",
+    "kind": "privilege_escalation",
+    "victim": "dev-04",
+    "attacker_ip": "203.0.113.178",
+    "start": "2026-10-05T05:54:27.553233+00:00",
+    "end": "2026-10-05T06:15:53.330565+00:00",
+    "stealthy": false,
+    "stages": [
+      "DISCOVERY",
+      "INITIAL_ACCESS",
+      "PERSISTENCE",
+      "PRIVILEGE_ESCALATION"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-003",
+    "kind": "credential_compromise",
+    "victim": "dev-08",
+    "attacker_ip": "203.0.113.83",
+    "start": "2026-10-03T10:51:07.419801+00:00",
+    "end": "2026-10-03T10:55:14.733481+00:00",
+    "stealthy": false,
+    "stages": [
+      "DISCOVERY",
+      "INITIAL_ACCESS"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-004",
+    "kind": "brute_force_then_access",
+    "victim": "analyst-03",
+    "attacker_ip": "203.0.113.133",
+    "start": "2026-10-05T08:54:08.597862+00:00",
+    "end": "2026-10-05T09:15:44.079888+00:00",
+    "stealthy": false,
+    "stages": [
+      "CREDENTIAL_ACCESS",
+      "DISCOVERY",
+      "INITIAL_ACCESS"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-005",
+    "kind": "brute_force",
+    "victim": "dev-08",
+    "attacker_ip": "203.0.113.165",
+    "start": "2026-10-06T04:06:48.272822+00:00",
+    "end": "2026-10-06T04:10:37.735810+00:00",
+    "stealthy": false,
+    "stages": [
+      "CREDENTIAL_ACCESS"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-006",
+    "kind": "brute_force_then_access",
+    "victim": "analyst-03",
+    "attacker_ip": "203.0.113.246",
+    "start": "2026-10-04T06:44:07.834848+00:00",
+    "end": "2026-10-04T07:06:19.745734+00:00",
+    "stealthy": false,
+    "stages": [
+      "CREDENTIAL_ACCESS",
+      "DISCOVERY",
+      "INITIAL_ACCESS"
+    ]
+  },
+  {
+    "scenario_id": "SCN-2026-007",
+    "kind": "resource_abuse",
+    "victim": "analyst-03",
+    "attacker_ip": "203.0.113.65",
+    "start": "2026-10-06T17:23:55.702663+00:00",
+    "end": "2026-10-06T19:46:18.145605+00:00",
+    "stealthy": false,
+    "stages": [
+      "IMPACT",
+      "INITIAL_ACCESS"
+    ]
+  }
+]
