@@ -19,6 +19,7 @@ from sklearn.metrics import (
 from sklearn.utils.class_weight import compute_sample_weight
 from xgboost import XGBClassifier
 
+from app.analysis.inventory import Inventory
 from app.ml.explain import Explainer
 from app.ml.features import FEATURES, build_windows, model_matrix, to_rows
 from app.ml.hmm import StageHMM, labelled_sequences
@@ -50,6 +51,7 @@ class LabelledData:
     dataset: object
     events: list
     score_from: datetime
+    inventory: object = None
 
 
 def build_labelled_data(seed: int, days: int, attacks_per_day: float, stealthy_fraction: float,
@@ -57,13 +59,14 @@ def build_labelled_data(seed: int, days: int, attacks_per_day: float, stealthy_f
     dataset = generate_dataset(seed=seed, days=days, attacks_per_day=attacks_per_day,
                                stealthy_fraction=stealthy_fraction, start=start)
     events, labels = normalize_dataset(dataset)
-    rows = to_rows(events)
+    inventory = Inventory.from_records(dataset.inventory)
+    rows = to_rows(events, inventory)
     # Skip the first day so no window is scored before identities have any history.
     score_from = dataset.start + timedelta(days=1)
     windows = build_windows(rows, window_minutes, score_from=score_from, labels=labels)
     X = model_matrix(windows)
     y = windows["label"].map({c: i for i, c in enumerate(ATTACK_CLASSES)}).to_numpy()
-    return LabelledData(windows, X, y, rows, labels, dataset, events, score_from)
+    return LabelledData(windows, X, y, rows, labels, dataset, events, score_from, inventory)
 
 
 def make_xgb(seed: int) -> XGBClassifier:
@@ -156,6 +159,10 @@ def train(config: TrainingConfig | None = None) -> ModelBundle:
         anomaly_reference=reference,
     )
 
+    bg_attack = data.X[data.y != 0].sample(min(400, int((data.y != 0).sum())), random_state=config.seed)
+    bg_normal = data.X[data.y == 0].sample(800, random_state=config.seed)
+    bundle.background = pd.concat([bg_attack, bg_normal])
+    bundle.background_labels = data.y[bundle.background.index.to_numpy()]
     sample = pd.concat([
         data.X[data.y != 0].sample(min(300, int((data.y != 0).sum())), random_state=config.seed),
         data.X[data.y == 0].sample(300, random_state=config.seed),

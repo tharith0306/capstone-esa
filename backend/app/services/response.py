@@ -17,6 +17,7 @@ class ResponseService:
     def __init__(self, session_factory: sessionmaker[Session], settings: Settings,
                  executor: ResponseExecutor | None = None):
         self.session_factory = session_factory
+        self.settings = settings
         self.executor = executor or ResponseExecutor(settings)
 
     def _load(self, session: Session, action_id: str) -> ResponseActionRecord:
@@ -50,6 +51,9 @@ class ResponseService:
                 raise WorkflowError(f"action is {action.status}; it must be approved before execution")
             if not action.automatable:
                 raise WorkflowError("manual action: perform it outside CloudShield and record it in the notes")
+            if (self.executor.live and self.settings.require_two_person_live and not rollback
+                    and action.decided_by == analyst):
+                raise WorkflowError("two-person rule: live execution must be done by someone other than the approver")
             try:
                 result = self.executor.execute(action.action_type, action.target, rollback=rollback)
             except ExecutionError as exc:

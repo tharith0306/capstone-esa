@@ -1,3 +1,30 @@
+x-backend-env: &backend-env
+  CLOUDSHIELD_DATABASE_URL: postgresql+psycopg://cloudshield:cloudshield@postgres:5432/cloudshield
+  CLOUDSHIELD_EVIDENCE_BACKEND: local
+  CLOUDSHIELD_EVIDENCE_DIR: /data/evidence
+  CLOUDSHIELD_MODEL_DIR: /data/models
+  CLOUDSHIELD_REPORTS_DIR: /reports
+  CLOUDSHIELD_CELERY_BROKER_URL: redis://redis:6379/0
+  CLOUDSHIELD_RESPONSE_MODE: ${CLOUDSHIELD_RESPONSE_MODE:-dry_run}
+  CLOUDSHIELD_RESPONDER_PROFILE: ${CLOUDSHIELD_RESPONDER_PROFILE:-}
+  # Unset = a random admin password is generated and printed once in the backend log.
+  CLOUDSHIELD_BOOTSTRAP_ADMIN_PASSWORD: ${CLOUDSHIELD_BOOTSTRAP_ADMIN_PASSWORD:-}
+  CLOUDSHIELD_JWT_SECRET: ${CLOUDSHIELD_JWT_SECRET:-}
+  CLOUDSHIELD_AWS_REGION: ${CLOUDSHIELD_AWS_REGION:-ap-south-1}
+  CLOUDSHIELD_AWS_PROFILE: ${CLOUDSHIELD_AWS_PROFILE:-}
+  CLOUDSHIELD_VPC_FLOW_LOG_GROUP: ${CLOUDSHIELD_VPC_FLOW_LOG_GROUP:-}
+  CLOUDSHIELD_SQS_QUEUE_URL: ${CLOUDSHIELD_SQS_QUEUE_URL:-}
+  CLOUDSHIELD_TRAIL_BUCKET: ${CLOUDSHIELD_TRAIL_BUCKET:-}
+  CLOUDSHIELD_SCHEDULE_COLLECT_MINUTES: ${CLOUDSHIELD_SCHEDULE_COLLECT_MINUTES:-0}
+  CLOUDSHIELD_NEO4J_URI: ${CLOUDSHIELD_NEO4J_URI:-}
+  CLOUDSHIELD_NEO4J_PASSWORD: ${CLOUDSHIELD_NEO4J_PASSWORD:-}
+
+x-backend-volumes: &backend-volumes
+  - evidence:/data/evidence
+  - models:/data/models
+  - ./ml_training/reports:/reports
+  - ${HOME}/.aws:/root/.aws:ro
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -16,35 +43,63 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build: ./backend
     environment:
-      CLOUDSHIELD_DATABASE_URL: postgresql+psycopg://cloudshield:cloudshield@postgres:5432/cloudshield
-      CLOUDSHIELD_EVIDENCE_BACKEND: local
-      CLOUDSHIELD_EVIDENCE_DIR: /data/evidence
-      CLOUDSHIELD_MODEL_DIR: /data/models
-      CLOUDSHIELD_REPORTS_DIR: /reports
+      <<: *backend-env
       CLOUDSHIELD_SEED_DEMO: ${CLOUDSHIELD_SEED_DEMO:-true}
-      CLOUDSHIELD_RESPONSE_MODE: dry_run
       CLOUDSHIELD_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
-      CLOUDSHIELD_AWS_REGION: ${CLOUDSHIELD_AWS_REGION:-ap-south-1}
-      CLOUDSHIELD_AWS_PROFILE: ${CLOUDSHIELD_AWS_PROFILE:-}
-    volumes:
-      - evidence:/data/evidence
-      - models:/data/models
-      - ./ml_training/reports:/reports
-      - ${HOME}/.aws:/root/.aws:ro
+    volumes: *backend-volumes
     ports:
       - "8000:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 120s
+      start_period: 180s
+
+  worker:
+    build: ./backend
+    entrypoint: ["celery", "-A", "app.worker", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment: *backend-env
+    volumes: *backend-volumes
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Periodic AWS collection + analysis. Enable with: docker compose --profile scheduler up
+  # and CLOUDSHIELD_SCHEDULE_COLLECT_MINUTES=15 plus AWS credentials.
+  beat:
+    build: ./backend
+    profiles: ["scheduler"]
+    entrypoint: ["celery", "-A", "app.worker", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    environment: *backend-env
+    depends_on:
+      - worker
+
+  # Optional graph database for attack-graph exploration: docker compose --profile graph up
+  neo4j:
+    image: neo4j:5.26-community
+    profiles: ["graph"]
+    environment:
+      NEO4J_AUTH: neo4j/${CLOUDSHIELD_NEO4J_PASSWORD:-change-me-neo4j}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
 
   frontend:
     build: ./frontend

@@ -8,11 +8,70 @@ export class ApiError extends Error {
   }
 }
 
+// ---------------------------------------------------------------- auth token
+const TOKEN_KEY = "cloudshield.token";
+export interface SessionUser { username: string; role: "viewer" | "analyst" | "admin" }
+
+export function getToken(): string | null {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+export function setToken(token: string | null) {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable: token lives only in memory for this page */
+  }
+  memoryToken = token;
+}
+let memoryToken: string | null = getToken();
+export const UNAUTHORIZED_EVENT = "cloudshield:unauthorized";
+
+function authHeaders(): Record<string, string> {
+  const token = memoryToken ?? getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function login(username: string, password: string): Promise<SessionUser> {
+  const res = await request<{ access_token: string; user: SessionUser }>("/api/auth/login", {
+    method: "POST", body: JSON.stringify({ username, password }),
+  });
+  setToken(res.access_token);
+  return res.user;
+}
+export async function logout() {
+  try {
+    await request("/api/auth/logout", { method: "POST" });
+  } finally {
+    setToken(null);
+  }
+}
+
+/** Download a protected file (PDF / Cypher) with the bearer token and save it. */
+export async function download(path: string, filename: string) {
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw new ApiError(res.status, (await res.json().catch(() => ({}))).detail ?? res.statusText);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
+  if (res.status === 401 && !path.startsWith("/api/auth/login")) {
+    setToken(null);
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {

@@ -186,6 +186,42 @@ def e3_explainability(bundle, data: LabelledData, seed: int, k: int = 3) -> dict
     }
 
 
+def e3b_local_explanations(bundle, data: LabelledData, n: int = 40, seed: int = 0) -> dict:
+    """LIME vs SHAP agreement and DiCE counterfactual success on correctly classified attack windows."""
+    from app.ml.local_explain import LocalExplainer
+
+    px = bundle.class_proba(data.X)
+    pred = px.argmax(1)
+    idx = np.flatnonzero((pred == data.y) & (data.y != 0))
+    if len(idx) == 0:
+        return {"explained": 0}
+    idx = np.random.default_rng(seed).choice(idx, min(n, len(idx)), replace=False)
+    local, shap_expl = LocalExplainer(bundle, seed), Explainer(bundle)
+    shap_list = shap_expl.explain(data.X.iloc[idx], data.windows.iloc[idx], [int(pred[i]) for i in idx], top_k=5)
+    agree, lime_secs, dice_secs, found, changed, r2 = [], 0.0, 0.0, 0, [], []
+    for i, sx in zip(idx, shap_list):
+        t = time.perf_counter()
+        lime = local.lime(data.X.iloc[i], int(pred[i]), num_features=5)
+        lime_secs += time.perf_counter() - t
+        r2.append(lime["local_r2"])
+        agree.append(len({f["feature"] for f in lime["features"]} & {f["feature"] for f in sx["features"]}) / 5)
+        t = time.perf_counter()
+        cf = local.counterfactuals(data.X.iloc[i], total=3)
+        dice_secs += time.perf_counter() - t
+        valid = [c for c in cf["counterfactuals"] if c["attack_probability"] < 0.5]
+        found += bool(valid)
+        changed += [len(c["changes"]) for c in valid]
+    return {
+        "explained": int(len(idx)),
+        "lime_ms": _r(1000 * lime_secs / len(idx), 1),
+        "lime_mean_local_r2": _r(np.mean(r2)),
+        "shap_lime_top5_agreement": _r(np.mean(agree)),
+        "dice_ms": _r(1000 * dice_secs / len(idx), 1),
+        "dice_success_rate": _r(found / len(idx)),
+        "dice_mean_features_changed": _r(np.mean(changed), 2) if changed else None,
+    }
+
+
 # ------------------------------------------------------------------ E4 / E5
 def _scenario_events(labels) -> dict[str, set[str]]:
     out = defaultdict(set)
@@ -202,7 +238,7 @@ def e4_e5_forensics_response(result, data: LabelledData, settings: Settings) -> 
     per_scenario = []
     hmm_attack_correct = hmm_attack_total = hmm_binary_correct = hmm_total = 0
     rule_attack_correct = rule_binary_correct = 0
-    rows_by_id = {r.event_id: r for r in to_rows(data.events)}
+    rows_by_id = {r.event_id: r for r in data.rows}
 
     for info in data.dataset.scenarios:
         events = {e for e in scen_events.get(info.scenario_id, set()) if rows_by_id[e].ts >= cutoff.timestamp()}
@@ -306,10 +342,71 @@ def _kind_table(per_scenario: list[dict]) -> list[dict]:
     return table
 
 
+def e4b_sequence_models(bundle, train: LabelledData, test: LabelledData, epochs: int) -> dict:
+    """HMM vs BiLSTM vs Transformer stage decoding, all on the same per-entity sessions of the test org."""
+    from app.ml import sequence
+
+    scored = [r for r in test.rows if r.ts >= test.score_from.timestamp()]
+
+    def score(pred: list[str]) -> dict:
+        truth = [test.labels[r.event_id].stage for r in scored]
+        atk = [(p, t) for p, t in zip(pred, truth) if t != "NORMAL"]
+        nrm = [p for p, t in zip(pred, truth) if t == "NORMAL"]
+        return {"attack_stage_accuracy": _r(sum(p == t for p, t in atk) / len(atk)) if atk else None,
+                "attack_detected_as_attack": _r(sum(p != "NORMAL" for p, _ in atk) / len(atk)) if atk else None,
+                "normal_kept_normal": _r(sum(p == "NORMAL" for p in nrm) / len(nrm)) if nrm else None}
+
+    hmm_pred = {}
+    for events, _ in sequence.sequences(scored, None):
+        for e, st in zip(events, bundle.hmm.decode([e.observation for e in events])[0]):
+            hmm_pred[e.event_id] = st
+    results = [{"model": "HMM (supervised, Viterbi)", "parameters": len(STAGES) * (len(STAGES) + 17 + 1),
+                "train_seconds": None, **score([hmm_pred[r.event_id] for r in scored])}]
+    results.append({"model": "Static rule (observation → stage)", "parameters": 0, "train_seconds": 0,
+                    **score([RULE_STAGE.get(r.observation, "NORMAL") for r in scored])})
+    if not sequence.available():
+        return {"events": len(scored), "models": results, "note": "PyTorch not installed: deep models skipped"}
+    for arch, label in (("lstm", "BiLSTM (2 layers)"), ("transformer", "Transformer encoder (2 layers, 4 heads)")):
+        model, info = sequence.train_tagger(train.rows, train.labels, arch=arch, epochs=epochs)
+        pred = dict(zip((r.event_id for r in scored), sequence.decode(model, scored)))
+        results.append({"model": label, "parameters": info["parameters"], "train_seconds": info["train_seconds"],
+                        **score([pred[r.event_id] for r in scored])})
+    return {"events": len(scored), "attack_events": sum(test.labels[r.event_id].stage != "NORMAL" for r in scored),
+            "models": results}
+
+
+def e5b_rl(engine: AnalysisEngine, train: LabelledData, test_result, test: LabelledData, seed: int = 0) -> dict:
+    from app.response import rl
+
+    def cases(result, data: LabelledData) -> list:
+        out = []
+        for inc in result.incidents:
+            attack = Counter(data.labels[e].attack_class for e in inc.event_ids
+                             if e in data.labels and data.labels[e].scenario_id)
+            out.append(rl.IncidentCase(inc.risk["level"], inc.primary_class, bool(attack),
+                                       attack.most_common(1)[0][0] if attack else None,
+                                       [a["action_type"] for a in inc.recommendations]))
+        return out
+
+    train_cases = cases(engine.analyze(train.events, score_from=train.score_from, inventory=train.inventory), train)
+    test_cases = cases(test_result, test)
+    q = rl.QPolicy(seed=seed).train(train_cases)
+    strategies = {
+        "Always monitor": lambda c: "MONITOR",
+        "Always full containment": lambda c: "FULL_CONTAINMENT",
+        "CloudShield policy engine (all proposals approved)": rl.policy_engine_action,
+        "Q-learning (contextual bandit)": lambda c: q.act(c.state),
+    }
+    return {"train_incidents": len(train_cases), "test_incidents": len(test_cases),
+            "reward_model": "damage prevented − operating cost; benign containment pays a disruption cost (see app/response/rl.py)",
+            "strategies": [{"strategy": k, **rl.evaluate(test_cases, f)} for k, f in strategies.items()],
+            "learned_policy": [row for row in q.table() if row["level"] in ("HIGH", "CRITICAL")][:16]}
+
+
 # ------------------------------------------------------------------ E6
 def e6_robustness(bundle, engine: AnalysisEngine, normal_test: dict, stealth: LabelledData, threshold: float) -> dict:
     window_metrics = e1_models(bundle, stealth, threshold)
-    result = engine.analyze(stealth.events, score_from=stealth.score_from)
+    result = engine.analyze(stealth.events, score_from=stealth.score_from, inventory=stealth.inventory)
     _, e5, per_scenario = e4_e5_forensics_response(result, stealth, Settings())
     return {
         "dataset": "all attacks stealthy (known IP & user agent, MFA, actions spread over hours)",
@@ -337,8 +434,12 @@ def run_experiments(settings: Settings, quick: bool = False) -> dict:
     windows, alerts = engine.detect(test.rows, test.score_from)
     e2 = e2_correlation(alerts, test.labels)
     e3 = e3_explainability(bundle, test, seed=0)
-    result = engine.analyze(test.events, score_from=test.score_from)
+    e3["local"] = e3b_local_explanations(bundle, test, n=15 if quick else 40)
+    result = engine.analyze(test.events, score_from=test.score_from, inventory=test.inventory)
     e4, e5, per_scenario = e4_e5_forensics_response(result, test, settings)
+    train_data = build_labelled_data(7, train_cfg.days, train_cfg.attacks_per_day, train_cfg.stealthy_fraction, 15)
+    e4["sequence_models"] = e4b_sequence_models(bundle, train_data, test, epochs=2 if quick else 6)
+    e5["reinforcement_learning"] = e5b_rl(engine, train_data, result, test)
     e6 = e6_robustness(bundle, engine, {m["model"]: m["recall"] for m in e1["models"]}, stealth, thr)
 
     def describe(d: LabelledData, purpose: str) -> dict:

@@ -75,6 +75,7 @@ class AttackBuilder:
         self.rng = rng
         self.env = env
         self.f = factory
+        self.inventory: list[dict] = []  # instances created by attackers, as an inventory scan would see them
 
     def build(self, scenario_id: str, kind: str, victim: Principal, start: datetime,
               attacker_ip: str, stealthy: bool) -> tuple[list[SimRecord], ScenarioInfo]:
@@ -312,14 +313,21 @@ class AttackBuilder:
         self.info.resources.update(instances)
         pool = f"203.0.113.{self.rng.randint(200, 254)}"
         self.info.ips.add(pool)
-        for idx, _ in enumerate(instances[:4]):
+        for idx, instance_id in enumerate(instances[:4]):
             eni = f"eni-0{self.rng.getrandbits(60):015x}"
             private = f"10.9.{idx}.{self.rng.randint(10, 250)}"
-            for hour in range(self.rng.randint(2, 5)):
+            self.inventory.append({"resource_id": instance_id, "resource_type": "ec2_instance", "region": region,
+                                   "attributes": {"enis": [eni], "private_ips": [private], "instance_type": itype}})
+            hours = self.rng.randint(2, 5)
+            for hour in range(hours):
                 ts = t + timedelta(minutes=5 + 60 * hour + self.rng.uniform(0, 30))
                 self._emit(ts, "IMPACT", self.f.flow(
                     eni, private, pool, self.rng.randint(40000, 60000), self.rng.choice([3333, 4444, 14444]),
                     self.rng.randint(200_000, 4 * MB), ts, seconds=3600), EventSource.VPC_FLOW)
+            for step in range(hours * 6):
+                ts = t + timedelta(minutes=5 + 10 * step)
+                self._emit(ts, "IMPACT", self.f.metric(ts, instance_id, self.rng.uniform(92, 100), private, region),
+                           EventSource.CLOUDWATCH)
         self._finding(t + timedelta(minutes=20), "IMPACT", 0.6, "CryptoCurrency:EC2/BitcoinTool.B!DNS", 8.0,
                       "EC2 instance is querying a domain name associated with cryptocurrency activity.",
                       instance_id=instances[0], remote_ip=pool, action_type="NETWORK_CONNECTION", outbound=True)

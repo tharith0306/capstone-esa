@@ -7,9 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml alembic.ini ./
 COPY app ./app
-RUN pip install --no-cache-dir .
+# Optional extras: "graph" (Neo4j driver) by default; add "deep" for the PyTorch sequence models,
+# e.g.  docker compose build --build-arg EXTRAS=graph,deep backend
+ARG EXTRAS=graph
+RUN pip install --no-cache-dir ".[${EXTRAS}]"
 
 COPY sample_data ./sample_data
 COPY docker-entrypoint.sh ./

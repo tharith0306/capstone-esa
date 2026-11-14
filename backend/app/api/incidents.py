@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_evidence_store
+from app.api.deps import get_db, get_evidence_store, require_role
+from app.services.auth import Principal
 from app.database.models import (
     AuditLog,
     DetectionRecord,
@@ -72,11 +73,11 @@ def get_incident(incident_id: str, db: DB) -> dict:
 class IncidentUpdate(BaseModel):
     status: Status | None = None
     analyst_notes: str | None = None
-    analyst: str = "analyst"
 
 
 @router.patch("/{incident_id}")
-def update_incident(incident_id: str, body: IncidentUpdate, db: DB) -> dict:
+def update_incident(incident_id: str, body: IncidentUpdate, db: DB,
+                    user: Annotated[Principal, Depends(require_role("analyst"))]) -> dict:
     inc = _get(db, incident_id)
     changes = {}
     if body.status and body.status != inc.status:
@@ -86,7 +87,7 @@ def update_incident(incident_id: str, body: IncidentUpdate, db: DB) -> dict:
         inc.analyst_notes = body.analyst_notes
         changes["notes_updated"] = True
     if changes:
-        audit(db, body.analyst, "update_incident", "incident", incident_id, **changes)
+        audit(db, user.username, "update_incident", "incident", incident_id, **changes)
         db.commit()
     return row_to_dict(inc, exclude=SUMMARY_EXCLUDE)
 

@@ -5,7 +5,8 @@ import {
 } from "recharts";
 import { get, post, type IncidentSummary, type Overview as OverviewT } from "../api";
 import {
-  ErrorBox, LEVEL_COLOR, LAYER_COLOR, Loading, RiskBadge, Section, Stat, StatusBadge, fmtTime, human, pct, useApi,
+  ErrorBox, LEVEL_COLOR, LAYER_COLOR, Loading, RiskBadge, Section, Stat, StatusBadge, canAct, fmtTime, human, pct, useApi,
+  useUser,
 } from "../components/ui";
 
 interface Trend { time: string; events: number; detections: number; incidents: number; max_risk: number }
@@ -16,6 +17,7 @@ interface LayerCount { layer: string; source: string; count: number }
 const tooltipStyle = { background: "#0f172a", border: "1px solid #334155", borderRadius: 8, fontSize: 12 };
 
 export default function Overview() {
+  const user = useUser();
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const overview = useApi(() => get<OverviewT>("/api/dashboard/overview"));
@@ -36,7 +38,9 @@ export default function Overview() {
         setMessage(`Simulated 3 days with ${r.scenarios.length} attack scenarios. Run analysis to detect them.`);
       } else {
         const r = await post<{ n_detections: number; n_incidents: number; seconds: number; status: string; error?: string }>("/api/analysis/run", {});
-        setMessage(r.status === "completed" ? `Analysis: ${r.n_detections} detections → ${r.n_incidents} incidents in ${r.seconds}s.` : `Analysis failed: ${r.error}`);
+        setMessage(r.status === "completed" ? `Analysis: ${r.n_detections} detections → ${r.n_incidents} incidents in ${r.seconds}s.`
+          : r.status === "queued" ? "Analysis queued on the background worker; refresh in a few seconds."
+          : `Analysis failed: ${r.error}`);
       }
       reloadAll();
     } catch (e) {
@@ -65,12 +69,12 @@ export default function Overview() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-ghost" disabled={!!busy} onClick={() => act("simulate")}>
+          {canAct(user, "admin") && <button className="btn-ghost" disabled={!!busy} onClick={() => act("simulate")}>
             {busy === "simulate" ? "Simulating…" : "Simulate attack data"}
-          </button>
-          <button className="btn-primary" disabled={!!busy} onClick={() => act("analyze")}>
+          </button>}
+          {canAct(user, "analyst") && <button className="btn-primary" disabled={!!busy} onClick={() => act("analyze")}>
             {busy === "analyze" ? "Analysing…" : "Run analysis"}
-          </button>
+          </button>}
         </div>
       </div>
       {message && <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-200">{message}</div>}

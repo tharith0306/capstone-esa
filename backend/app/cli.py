@@ -10,20 +10,13 @@
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, timezone
 
-from app.collectors.aws import aws_client
-from app.collectors.base import Collector
-from app.collectors.cloudtrail import CloudTrailCollector
-from app.collectors.guardduty import GuardDutyCollector
-from app.collectors.vpc_flow import VpcFlowCollector
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.database.session import create_engine_from_url, create_session_factory, init_db
 from app.evidence.store import build_evidence_store
 from app.processing.normalizers.base import parse_timestamp
 from app.schemas.event import EventSource
-from app.services.checkpoints import get_checkpoint, set_checkpoint
 from app.services.ingestion import IngestionService
 from app.services.record_files import load_records
 
@@ -33,16 +26,6 @@ def _build(settings: Settings):
     init_db(engine)
     session_factory = create_session_factory(engine)
     return session_factory, IngestionService(session_factory, build_evidence_store(settings))
-
-
-def _collector(settings: Settings, source: EventSource, log_group: str | None) -> Collector:
-    if source is EventSource.CLOUDTRAIL:
-        return CloudTrailCollector(aws_client(settings, "cloudtrail"))
-    if source is EventSource.GUARDDUTY:
-        return GuardDutyCollector(aws_client(settings, "guardduty"))
-    if not log_group:
-        sys.exit("--log-group is required for vpc_flow")
-    return VpcFlowCollector(aws_client(settings, "logs"), log_group)
 
 
 def cmd_init_db(settings: Settings, _: argparse.Namespace) -> None:
@@ -59,32 +42,32 @@ def cmd_ingest_file(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_collect(settings: Settings, args: argparse.Namespace) -> None:
+    from app.services.collection import collect
+
     session_factory, ingestion = _build(settings)
-    source = EventSource(args.source)
-    collector = _collector(settings, source, args.log_group)
+    since = parse_timestamp(args.since) if args.since else None
+    until = parse_timestamp(args.until) if args.until else None
+    print(json.dumps(collect(settings, session_factory, ingestion, args.source, since, until, args.log_group), indent=2))
 
-    now = datetime.now(timezone.utc)
-    end = parse_timestamp(args.until) if args.until else now
-    if args.since:
-        start = parse_timestamp(args.since)
-    else:
-        with session_factory() as session:
-            start = get_checkpoint(session, collector.name) or (
-                end - timedelta(minutes=settings.collector_default_lookback_minutes)
-            )
 
-    print(f"collecting {source.value} from {start.isoformat()} to {end.isoformat()}")
-    result = ingestion.ingest(source, collector.collect(start, end))
-    print(json.dumps(result.model_dump(mode="json"), indent=2))
+def cmd_inventory(settings: Settings, args: argparse.Namespace) -> None:
+    from app.services.inventory import refresh_inventory_from_aws
 
-    # Late-delivered events can carry timestamps before `end`; re-read an overlap next time.
-    cursor = max(start, end - timedelta(minutes=settings.collector_overlap_minutes))
-    with session_factory() as session:
-        set_checkpoint(session, collector.name, cursor)
+    session_factory, _ = _build(settings)
+    print(json.dumps(refresh_inventory_from_aws(settings, session_factory), indent=2))
 
 
 def cmd_train(settings: Settings, args: argparse.Namespace) -> None:
+    from app.ml.models import ModelBundle
     from app.ml.training import TrainingConfig, train
+    from app.services.models_registry import bundle_problem
+
+    if args.if_needed and ModelBundle.exists(settings.model_dir):
+        problem = bundle_problem(ModelBundle.load(settings.model_dir))
+        if problem is None:
+            print("model bundle is current; not retraining")
+            return
+        print(f"retraining: {problem}")
 
     bundle = train(TrainingConfig(seed=args.seed, days=args.days, attacks_per_day=args.attacks_per_day))
     bundle.save(settings.model_dir)
@@ -109,7 +92,8 @@ def cmd_simulate(settings: Settings, args: argparse.Namespace) -> None:
                 print("database already has events; skipping demo seeding")
                 return
     start = parse_timestamp(args.start) if args.start else None
-    result = seed_demo(ingestion, settings.reports_dir, args.seed, args.days, args.attacks_per_day, start)
+    result = seed_demo(ingestion, settings.reports_dir, args.seed, args.days, args.attacks_per_day, start,
+                       session_factory)
     print(json.dumps({k: v for k, v in result.items() if k != "scenarios"}, indent=2))
     for s in result["scenarios"]:
         print(f"  {s['scenario_id']}  {s['kind']:26s} victim={s['victim']:16s} {s['start'][:16]}"
@@ -136,6 +120,13 @@ def cmd_experiments(settings: Settings, args: argparse.Namespace) -> None:
     print(f"wrote {report['paths']['markdown']} and {report['paths']['json']}")
 
 
+def cmd_public(settings: Settings, args: argparse.Namespace) -> None:
+    from app.experiments.public_datasets import run_public_experiment
+
+    report = run_public_experiment(args.dataset, args.path, settings.reports_dir, args.max_rows)
+    print(json.dumps(report["models"], indent=2))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="cloudshield")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -147,15 +138,18 @@ def main(argv: list[str] | None = None) -> None:
     p_file.add_argument("paths", nargs="+")
 
     p_collect = sub.add_parser("collect", help="pull records from AWS and ingest them")
-    p_collect.add_argument("source", choices=[s.value for s in EventSource])
+    p_collect.add_argument("source", choices=["cloudtrail", "cloudtrail_s3", "vpc_flow", "guardduty", "cloudwatch", "sqs"])
     p_collect.add_argument("--since", help="ISO-8601 start; defaults to the stored checkpoint")
     p_collect.add_argument("--until", help="ISO-8601 end; defaults to now")
     p_collect.add_argument("--log-group", help="CloudWatch Logs group (vpc_flow only)")
+
+    sub.add_parser("inventory", help="refresh the asset inventory (EC2/ENI/S3/IAM) from AWS")
 
     p_train = sub.add_parser("train", help="train IF / XGBoost / RF / HMM on simulated labelled data")
     p_train.add_argument("--seed", type=int, default=7)
     p_train.add_argument("--days", type=int, default=30)
     p_train.add_argument("--attacks-per-day", type=float, default=6.0)
+    p_train.add_argument("--if-needed", action="store_true", help="only train if no current bundle exists")
 
     p_sim = sub.add_parser("simulate", help="ingest a simulated organisation under attack (demo data)")
     p_sim.add_argument("--seed", type=int, default=2026)
@@ -172,11 +166,17 @@ def main(argv: list[str] | None = None) -> None:
     p_exp = sub.add_parser("experiments", help="run the research experiments and write a report")
     p_exp.add_argument("--quick", action="store_true", help="smaller datasets (for CI / smoke tests)")
 
+    p_pub = sub.add_parser("public-experiment", help="network IDS experiment on a public dataset (UNSW-NB15, TON_IoT, CIC-IDS2017)")
+    p_pub.add_argument("--dataset", required=True, choices=["unsw", "ton_iot", "cicids"])
+    p_pub.add_argument("--path", default="../ml_training/datasets", help="directory with the dataset CSVs")
+    p_pub.add_argument("--max-rows", type=int, help="limit rows per file (quick runs)")
+
     args = parser.parse_args(argv)
     settings = get_settings()
     configure_logging(settings.log_level)
     commands = {
         "init-db": cmd_init_db, "ingest-file": cmd_ingest_file, "collect": cmd_collect, "train": cmd_train,
+        "inventory": cmd_inventory, "public-experiment": cmd_public,
         "simulate": cmd_simulate, "analyze": cmd_analyze, "experiments": cmd_experiments,
     }
     commands[args.command](settings, args)

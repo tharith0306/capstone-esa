@@ -23,6 +23,7 @@ from app.database.models import (
 from app.processing.hashing import canonical_json, sha256_hex
 from app.services.audit import audit
 from app.services.models_registry import ModelRegistry
+from app.services.inventory import load_inventory
 from app.services.serialize import row_to_dict, utc
 
 log = logging.getLogger(__name__)
@@ -65,15 +66,35 @@ class AnalysisService:
             correlation=CorrelationConfig(threshold=s.correlation_threshold),
         ))
 
-    def run(self, start: datetime | None = None, end: datetime | None = None, actor: str = "system") -> dict:
+    def _new_run(self, start, end, status: str) -> str:
+        run_id = f"run_{datetime.now(timezone.utc):%Y%m%d%H%M%S}_{secrets.token_hex(3)}"
+        with self.session_factory() as session:
+            session.add(AnalysisRun(run_id=run_id, model_version=self.registry.get().version,
+                                    range_start=start, range_end=end, status=status))
+            session.commit()
+        return run_id
+
+    def submit(self, start: datetime | None = None, end: datetime | None = None, actor: str = "system") -> dict:
+        """Queue on Celery when a broker is configured, otherwise run inline."""
+        start, end = utc(start), utc(end)
+        if not self.settings.celery_broker_url:
+            return self.run(start, end, actor)
+        from app.worker import analyze_task
+
+        run_id = self._new_run(start, end, "queued")
+        analyze_task.delay(run_id, start.isoformat() if start else None, end.isoformat() if end else None, actor)
+        with self.session_factory() as session:
+            return row_to_dict(session.get(AnalysisRun, run_id))
+
+    def run(self, start: datetime | None = None, end: datetime | None = None, actor: str = "system",
+            run_id: str | None = None) -> dict:
         start, end = utc(start), utc(end)
         engine = self.engine()
-        bundle = engine.bundle
-        run_id = f"run_{datetime.now(timezone.utc):%Y%m%d%H%M%S}_{secrets.token_hex(3)}"
+        run_id = run_id or self._new_run(start, end, "running")
         t0 = time.time()
         with self.session_factory() as session:
-            run = AnalysisRun(run_id=run_id, model_version=bundle.version, range_start=start, range_end=end)
-            session.add(run)
+            run = session.get(AnalysisRun, run_id)
+            run.status, run.started_at = "running", utcnow()
             session.commit()
             try:
                 stmt = select(SecurityEventRecord).order_by(SecurityEventRecord.timestamp)
@@ -87,7 +108,8 @@ class AnalysisService:
                     # Without an explicit range, treat the first day as baseline: no identity has any
                     # history yet, so scoring it would flag everyone as "new".
                     score_from = events[0].timestamp + timedelta(hours=self.settings.baseline_warmup_hours)
-                result = engine.analyze(events, score_from=score_from)
+                inventory = load_inventory(session)
+                result = engine.analyze(events, score_from=score_from, inventory=inventory)
                 self._persist(session, run, result, {e.event_id: e for e in events}, start, end)
                 run.status = "completed"
                 run.n_events, run.n_windows = result.n_events, len(result.windows)
@@ -135,7 +157,9 @@ class AnalysisService:
                     kind=alert.kind, rule=alert.rule, entity=alert.entity, start=alert.start, end=alert.end,
                     predicted_class=alert.predicted_class, class_probability=alert.class_probability,
                     attack_probability=alert.attack_probability, anomaly_score=alert.anomaly_score,
-                    score=alert.score, probabilities=alert.probabilities, explanation=alert.explanation,
+                    score=alert.score, probabilities=alert.probabilities,
+                    explanation={**(alert.explanation or {}), "model_input": alert.model_input}
+                    if alert.model_input else alert.explanation,
                     entities={"actors": sorted(alert.actors), "keys": sorted(alert.keys),
                               "ips": sorted(alert.ips), "resources": sorted(alert.resources)},
                     event_ids=alert.event_ids,

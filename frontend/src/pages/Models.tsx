@@ -101,6 +101,20 @@ export default function Models() {
               </ul>
             </Section>
           </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Section title="E3b · LIME and DiCE">
+              <ul className="space-y-1 text-sm">
+                <li>LIME {exp.data.e3_explainability.local?.lime_ms} ms, local R² {exp.data.e3_explainability.local?.lime_mean_local_r2}, top-5 agreement with SHAP {exp.data.e3_explainability.local?.shap_lime_top5_agreement}</li>
+                <li>DiCE counterfactual found for {exp.data.e3_explainability.local?.dice_success_rate} of windows, {exp.data.e3_explainability.local?.dice_mean_features_changed} features changed on average</li>
+              </ul>
+            </Section>
+            <Section title="E5b · RL response simulator (offline, assumed reward model)">
+              <Table rows={exp.data.e5_risk_and_response.reinforcement_learning?.strategies ?? []} columns={[["strategy", "Strategy"], ["mean_reward", "Mean reward"], ["attack_containment_rate", "Attacks contained"], ["benign_disruption_rate", "Benign disrupted"]]} />
+            </Section>
+          </div>
+          <Section title="E4b · Stage decoding: HMM vs deep sequence models">
+            <Table rows={exp.data.e4_forensics.sequence_models?.models ?? []} columns={[["model", "Model"], ["parameters", "Parameters"], ["train_seconds", "Train s"], ["attack_stage_accuracy", "Attack stage acc."], ["attack_detected_as_attack", "Attack events flagged"], ["normal_kept_normal", "Normal kept normal"]]} />
+          </Section>
           <Section title="E2 · Correlation ablation">
             <Table rows={exp.data.e2_correlation.methods} columns={[["method", "Method"], ["incidents", "Incidents"], ["alert_reduction", "Alert reduction"], ["pairwise_precision", "Pair P"], ["pairwise_recall", "Pair R"], ["pairwise_f1", "Pair F1"], ["fragments_per_scenario", "Incidents / scenario"], ["false_alert_contamination", "Contamination"]]} />
           </Section>

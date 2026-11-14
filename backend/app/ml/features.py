@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from app.analysis.inventory import Inventory
 from app.analysis.sensitivity import resource_sensitivity
 from app.ml.taxonomy import EVENT_TYPE_OBSERVATION, STAGE_CLASS, STAGE_PRIORITY
 from app.schemas.event import SecurityEvent
@@ -40,10 +41,12 @@ FEATURES = [
     # network flows
     "flow_count", "rejected_flow_ratio", "unique_dst_ports", "unique_external_peers", "bytes_out_external",
     "bytes_in_external", "new_external_peer_ratio", "uncommon_port_flows", "inbound_ssh_accepted",
+    # host telemetry (CloudWatch)
+    "max_cpu_utilization", "high_cpu_samples",
 ]
 RATIO_FEATURES = {
     "write_ratio", "new_ip_ratio", "off_hours_ratio", "new_event_type_ratio", "new_resource_ratio",
-    "rejected_flow_ratio", "new_external_peer_ratio", "new_user_agent",
+    "rejected_flow_ratio", "new_external_peer_ratio", "new_user_agent", "max_cpu_utilization",
 }
 
 _INTERNAL_NETS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
@@ -117,6 +120,8 @@ class EventRow:
     instance_count: int
     entity: str
     observation: str
+    metric_value: float | None = None
+    extra_resources: tuple[str, ...] = ()  # e.g. all instance ids of RunInstances, inventory-mapped instance
 
 
 def _resource_key(resource_id: str | None, resource_type: str | None) -> str | None:
@@ -130,6 +135,8 @@ def observation_symbol(source: str, event_type: str, outcome: str, access_denied
                        nbytes: int, dst_internal: bool) -> str:
     if source == "guardduty":
         return "THREAT_FINDING"
+    if source == "cloudwatch":
+        return "COMPUTE_PROVISION" if event_type == "METRIC_CPU_HIGH" else "ROUTINE_READ"
     if source == "vpc_flow":
         if outcome == "failure":
             return "FLOW_REJECTED"
@@ -143,16 +150,26 @@ def observation_symbol(source: str, event_type: str, outcome: str, access_denied
     return EVENT_TYPE_OBSERVATION.get(event_type, "ROUTINE_WRITE")
 
 
-def to_rows(events: list[SecurityEvent]) -> list[EventRow]:
+def to_rows(events: list[SecurityEvent], inventory: Inventory | None = None) -> list[EventRow]:
+    """`inventory` maps network interfaces / private IPs to instances so that flow and metric events
+    carry the instance id (which links them to RunInstances calls and GuardDuty findings)."""
     rows = []
     for e in events:
         a = e.attributes or {}
         source = e.event_source.value
+        extra: tuple[str, ...] = tuple(a.get("instance_ids") or ())
         if e.actor_id:
             entity = f"actor:{e.actor_id}"
         elif source == "vpc_flow":
             host = e.source_ip if is_internal(e.source_ip) else e.destination_ip if is_internal(e.destination_ip) else e.source_ip
             entity = f"host:{host}"
+            if inventory is not None:
+                instance = inventory.instance_for(e.resource_id, host)
+                if instance:
+                    extra = (instance,)
+        elif source == "cloudwatch" and a.get("private_ip"):
+            entity = f"host:{a['private_ip']}"
+            extra = (e.resource_id,) if e.resource_id else ()
         elif e.resource_id:
             entity = f"resource:{e.resource_id}"
         else:
@@ -187,6 +204,8 @@ def to_rows(events: list[SecurityEvent]) -> list[EventRow]:
             entity=entity,
             observation=observation_symbol(source, e.event_type, e.outcome.value, access_denied, nbytes,
                                            is_internal(e.destination_ip)),
+            metric_value=float(a["value"]) if source == "cloudwatch" and a.get("value") is not None else None,
+            extra_resources=extra,
         ))
     rows.sort(key=lambda r: r.ts)
     return rows
@@ -207,6 +226,7 @@ class _History:
     last_ts: float | None = None
 
     def update(self, win: list[EventRow]) -> None:
+        win = [e for e in win if e.source != "cloudwatch"] or win
         for e in win:
             if e.src_ip:
                 self.ips.add(e.src_ip)
@@ -237,14 +257,20 @@ def _off_hours(e: EventRow, h: _History) -> bool:
 
 def _window_features(win: list[EventRow], h: _History) -> dict[str, float]:
     f = dict.fromkeys(FEATURES, 0.0)
-    n = len(win)
-    span_min = max(1.0, (win[-1].ts - win[0].ts) / 60)
+    activity = [e for e in win if e.source != "cloudwatch"]
+    n = len(activity) or 1
+    span_min = max(1.0, (activity[-1].ts - activity[0].ts) / 60) if activity else 1.0
     types, resources, src_ips, objects, dst_ports, peers = set(), set(), set(), set(), set(), set()
     writes = new_ip = with_ip = off = new_type = new_res = with_res = new_region = 0
     flows = rejected = new_peer = 0
 
     for e in win:
         t = e.event_type
+        if e.source == "cloudwatch":
+            if e.metric_value is not None:
+                f["max_cpu_utilization"] = max(f["max_cpu_utilization"], e.metric_value / 100.0)
+                f["high_cpu_samples"] += t == "METRIC_CPU_HIGH"
+            continue
         types.add(t)
         if e.resource_key:
             resources.add(e.resource_key)
@@ -320,7 +346,7 @@ def _window_features(win: list[EventRow], h: _History) -> dict[str, float]:
                 if e.dst_port == 22:
                     f["inbound_ssh_accepted"] += 1
 
-    f["event_count"] = n
+    f["event_count"] = len(activity)
     f["api_calls_per_minute"] = n / span_min
     f["unique_event_types"] = len(types)
     f["unique_resources"] = len(resources)
@@ -331,9 +357,9 @@ def _window_features(win: list[EventRow], h: _History) -> dict[str, float]:
     f["off_hours_ratio"] = off / n
     f["new_event_type_ratio"] = new_type / n
     f["new_resource_ratio"] = new_res / with_res if with_res else 0.0
-    f["new_user_agent"] = float(any(e.ua and e.ua not in h.uas for e in win if e.source == "cloudtrail"))
+    f["new_user_agent"] = float(any(e.ua and e.ua not in h.uas for e in activity if e.source == "cloudtrail"))
     f["new_region_count"] = new_region
-    f["activity_deviation"] = n / (h.mean_events + 1.0) if h.n_windows else n / 6.0
+    f["activity_deviation"] = len(activity) / (h.mean_events + 1.0) if h.n_windows else len(activity) / 6.0
     gap_h = (win[0].ts - h.last_ts) / 3600 if h.last_ts else 168.0
     f["hours_since_prev_activity"] = min(168.0, gap_h)
     f["flow_count"] = flows
@@ -394,7 +420,8 @@ def build_windows(
                     actors=sorted({e.actor for e in win if e.actor}),
                     keys=sorted({k for e in win for k in (e.key, e.created_key) if k}),
                     ips=sorted(ips),
-                    resources=sorted({e.resource_key for e in win if e.resource_key}),
+                    resources=sorted({e.resource_key for e in win if e.resource_key}
+                                     | {r for e in win for r in e.extra_resources}),
                     max_severity=max(e.severity for e in win),
                 )
                 if labels is not None:

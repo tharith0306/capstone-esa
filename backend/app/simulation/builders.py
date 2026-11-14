@@ -148,6 +148,11 @@ class RecordFactory:
         return record
 
     @staticmethod
+    def metric(ts: datetime, instance_id: str, value: float, private_ip: str, region: str = HOME_REGION) -> dict[str, Any]:
+        return {"instance_id": instance_id, "metric": "CPUUtilization", "value": round(value, 2), "unit": "Percent",
+                "timestamp": iso(ts), "region": region, "account_id": ACCOUNT_ID, "private_ip": private_ip}
+
+    @staticmethod
     def flow(
         eni: str, src: str, dst: str, sport: int, dport: int, nbytes: int, start: datetime,
         *, action: str = "ACCEPT", protocol: int = 6, seconds: int = 60,

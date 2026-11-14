@@ -15,6 +15,13 @@ VPC_SAMPLE = SAMPLE_DIR / "vpc_flow_sample.log"
 GUARDDUTY_SAMPLE = SAMPLE_DIR / "guardduty_findings.json"
 
 DUMMY_EVIDENCE = EvidenceRef(reference="local://test/aa/test.json", sha256="a" * 64)
+TEST_ADMIN_PASSWORD = "test-admin-password"
+
+
+def login(client: TestClient, username: str = "admin", password: str = TEST_ADMIN_PASSWORD) -> None:
+    response = client.post("/api/auth/login", json={"username": username, "password": password})
+    assert response.status_code == 200, response.text
+    client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
 
 
 @pytest.fixture
@@ -35,12 +42,15 @@ def settings(tmp_path) -> Settings:
         evidence_backend="local",
         evidence_dir=str(tmp_path / "evidence"),
         log_level="WARNING",
+        jwt_secret="test-secret-test-secret-test-secret",
+        bootstrap_admin_password=TEST_ADMIN_PASSWORD,
     )
 
 
 @pytest.fixture
 def client(settings) -> TestClient:
     with TestClient(create_app(settings)) as test_client:
+        login(test_client)
         yield test_client
 
 

@@ -3,6 +3,44 @@
 CloudShield needs a small AWS account to monitor. **Use a dedicated sandbox account** (or an
 AWS Organizations member account), never a personal account with real data and never root keys.
 
+## Fastest path: Terraform / OpenTofu
+
+[`terraform/`](terraform/) creates the whole lab in one apply (validated with `tofu validate`):
+
+- a multi-region trail with log-file validation and S3 data events on the sensitive bucket;
+- VPC Flow Logs delivered to CloudWatch Logs;
+- GuardDuty;
+- an EventBridge → SQS queue for near-real-time events;
+- a versioned, Object-Locked evidence bucket;
+- lab users `alice` and `bob`;
+- a read-only `cloudshield-collector` identity, a write-scoped `cloudshield-responder` identity, and a budget alert.
+
+```bash
+cd terraform && tofu init && tofu apply -var budget_email=you@example.com
+```
+
+Then follow [`ATTACK_SIMULATION.md`](ATTACK_SIMULATION.md) to validate detection with real attacks.
+The manual steps below do the same thing by hand.
+
+## Ingestion paths
+
+| Collector (`python -m app.cli collect …`) | Source | Latency | Notes |
+|---|---|---|---|
+| `cloudtrail` | CloudTrail LookupEvents | 5–15 min | Management events only; 2 req/s limit |
+| `cloudtrail_s3` | Trail files in S3 | 5–15 min | Includes S3 data events (GetObject) and all regions |
+| `sqs` | EventBridge → SQS | seconds | CloudTrail API calls, sign-ins and GuardDuty findings. Messages are deleted only after ingest |
+| `vpc_flow` | CloudWatch Logs | up to 10 min | Default v2 format |
+| `guardduty` | GuardDuty API | minutes | An input signal only |
+| `cloudwatch` | GetMetricData (CPU) | 10-min datapoints | Joined to hosts by private IP |
+| `inventory` (CLI command) | DescribeInstances / ListBuckets / ListUsers | on demand | Maps ENIs and IPs to instances so flow alerts link to API alerts |
+
+The Celery `beat` service runs every collector, then the analysis, every
+`CLOUDSHIELD_SCHEDULE_COLLECT_MINUTES`:
+
+```bash
+docker compose --profile scheduler up
+```
+
 Replace `ACCOUNT_ID` and `REGION` (e.g. `ap-south-1`) in the JSON files and commands below.
 
 ## Cost notes
@@ -68,7 +106,9 @@ Only ever put synthetic data in the lab buckets.
 
 ## 5. Collector identity
 
-Create an IAM user or role for CloudShield with **only** `collector-policy.json` attached, store its
+Create an IAM user or role for CloudShield with **only** `collector-policy.json` attached (the
+Terraform version also grants `cloudwatch:GetMetricData`, `ec2:DescribeInstances`, `s3:ListAllMyBuckets`,
+`iam:ListUsers` for the inventory, and SQS receive/delete on the event queue), store its
 credentials in a named profile (`aws configure --profile cloudshield-lab`), then:
 
 ```bash

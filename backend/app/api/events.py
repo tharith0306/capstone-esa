@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_evidence_store, get_ingestion_service, get_settings_dep
+from app.api.deps import get_db, get_evidence_store, get_ingestion_service, get_settings_dep, require_role
 from app.core.config import Settings
 from app.database.models import SecurityEventRecord, event_from_record
 from app.evidence.store import EvidenceStore
@@ -32,7 +32,7 @@ def _utc(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-@router.post("/ingest", response_model=IngestResult)
+@router.post("/ingest", response_model=IngestResult, dependencies=[Depends(require_role("analyst"))])
 def ingest_events(
     body: IngestRequest,
     ingestion: Annotated[IngestionService, Depends(get_ingestion_service)],

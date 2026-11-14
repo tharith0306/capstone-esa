@@ -35,6 +35,7 @@ class Alert:
     probabilities: dict[str, float] = field(default_factory=dict)
     window_index: int | None = None
     available_at: datetime | None = None  # when the detection could be raised (window close / event time)
+    model_input: dict[str, float] | None = None  # model-space feature vector (for LIME / DiCE on demand)
 
     @property
     def stage_order(self) -> int | None:
@@ -115,7 +116,7 @@ def rule_alerts(rows: list[EventRow], since: datetime | None) -> list[Alert]:
             actors={r.actor} if r.actor else set(),
             keys={k for k in (r.key, r.created_key) if k},
             ips={ip for ip in (r.src_ip, r.dst_ip) if ip},
-            resources={r.resource_key} if r.resource_key else set(),
+            resources=({r.resource_key} if r.resource_key else set()) | set(r.extra_resources),
             predicted_class=cls or "unknown",
             class_probability=conf,
             attack_probability=conf if cls else 0.0,

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { get, patch, type Incident } from "../api";
+import { download, get, patch, type Incident } from "../api";
 import AttackGraph from "../components/AttackGraph";
-import { ActionsPanel, RiskBreakdown, ShapPanel, Timeline } from "../components/IncidentPanels";
-import { ErrorBox, Loading, RiskBadge, Section, StatusBadge, fmtTime, human, pct, useAnalyst, useApi } from "../components/ui";
+import { ActionsPanel, RiskBreakdown, ShapPanel, Timeline, WhatIfPanel } from "../components/IncidentPanels";
+import { ErrorBox, Loading, RiskBadge, Section, StatusBadge, canAct, fmtTime, human, pct, useApi, useUser } from "../components/ui";
 
 const TABS = ["Summary", "Timeline", "Explainability", "Attack graph", "Evidence", "Response"] as const;
 type Tab = (typeof TABS)[number];
@@ -14,7 +14,9 @@ export default function IncidentDetail() {
   const { id } = useParams();
   const [tab, setTab] = useState<Tab>("Summary");
   const [onlyAttack, setOnlyAttack] = useState(true);
-  const [analyst] = useAnalyst();
+  const user = useUser();
+  const mayAct = canAct(user, "analyst");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const { data: inc, error, reload } = useApi(() => get<Incident>(`/api/incidents/${id}`), [id]);
   const report = useApi(() => (tab === "Evidence" ? get<Report>(`/api/incidents/${id}/report`) : Promise.resolve(null)), [id, tab]);
   const [notes, setNotes] = useState("");
@@ -24,7 +26,7 @@ export default function IncidentDetail() {
   if (!inc) return <Loading />;
 
   const update = async (body: Record<string, unknown>) => {
-    await patch(`/api/incidents/${inc.incident_id}`, { ...body, analyst });
+    await patch(`/api/incidents/${inc.incident_id}`, body);
     reload();
   };
 
@@ -41,7 +43,7 @@ export default function IncidentDetail() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {["investigating", "contained", "resolved", "false_positive"].map((s) => (
+          {mayAct && ["investigating", "contained", "resolved", "false_positive"].map((s) => (
             <button key={s} className="btn-ghost py-1 text-xs" disabled={inc.status === s} onClick={() => update({ status: s })}>Mark {human(s).toLowerCase()}</button>
           ))}
         </div>
@@ -82,7 +84,7 @@ export default function IncidentDetail() {
                 <dt className="text-slate-500">Resources</dt><dd className="mono break-all">{inc.resources.slice(0, 12).join(", ") || "—"}</dd>
               </dl>
             </Section>
-            <Section title="Analyst notes" actions={<button className="btn-primary py-1 text-xs" onClick={() => update({ analyst_notes: notes })}>Save</button>}>
+            <Section title="Analyst notes" actions={mayAct ? <button className="btn-primary py-1 text-xs" onClick={() => update({ analyst_notes: notes })}>Save</button> : undefined}>
               <textarea className="input h-24 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Findings, hypotheses, next steps…" />
             </Section>
           </div>
@@ -111,7 +113,12 @@ export default function IncidentDetail() {
         </Section>
       )}
 
-      {tab === "Explainability" && <Section title="SHAP explanation"><ShapPanel explanation={inc.explanation} /></Section>}
+      {tab === "Explainability" && (
+        <div className="space-y-4">
+          <Section title="SHAP explanation"><ShapPanel explanation={inc.explanation} /></Section>
+          <Section title="What-if analysis: LIME and DiCE counterfactuals"><WhatIfPanel incidentId={inc.incident_id} /></Section>
+        </div>
+      )}
 
       {tab === "Attack graph" && <Section title="Attack graph (NetworkX, ranked)"><AttackGraph nodes={inc.graph.nodes} edges={inc.graph.edges} /></Section>}
 
@@ -127,7 +134,12 @@ export default function IncidentDetail() {
                   ? <span className="text-emerald-300">all {report.data.evidence_summary.events} records verified</span>
                   : <span className="text-rose-300">{report.data.evidence_summary.verified}/{report.data.evidence_summary.events} verified</span>) : "checking…"}
               </div>
-              <div><a className="text-sky-400 hover:underline" href={`/api/incidents/${inc.incident_id}/report`} target="_blank" rel="noreferrer">Download full forensic report (JSON)</a></div>
+              <div className="flex flex-wrap gap-2">
+                <button className="btn-primary py-1 text-xs" onClick={() => download(`/api/forensics/${inc.incident_id}/report.pdf`, `cloudshield-${inc.incident_id}.pdf`).catch((e) => setDownloadError(String(e.message ?? e)))}>Forensic report (PDF)</button>
+                <button className="btn-ghost py-1 text-xs" onClick={() => download(`/api/incidents/${inc.incident_id}/report`, `cloudshield-${inc.incident_id}.json`).catch((e) => setDownloadError(String(e.message ?? e)))}>Full report (JSON)</button>
+                <button className="btn-ghost py-1 text-xs" onClick={() => download(`/api/forensics/${inc.incident_id}/graph.cypher`, `cloudshield-${inc.incident_id}.cypher`).catch((e) => setDownloadError(String(e.message ?? e)))}>Attack graph (Neo4j Cypher)</button>
+                {downloadError && <span className="text-xs text-rose-300">{downloadError}</span>}
+              </div>
             </div>
             <div className="mt-3 max-h-[420px] overflow-auto">
               <table className="w-full">

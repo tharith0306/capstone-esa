@@ -29,6 +29,9 @@ class ModelBundle:
     hmm: StageHMM
     anomaly_reference: np.ndarray  # sorted raw IF scores of held-out normal windows
     metadata: dict[str, Any] = field(default_factory=dict)
+    # stratified sample of training windows (model space) + labels, for LIME and DiCE
+    background: pd.DataFrame | None = None
+    background_labels: np.ndarray | None = None
 
     # ---------- inference ----------
     def raw_anomaly(self, X: pd.DataFrame) -> np.ndarray:

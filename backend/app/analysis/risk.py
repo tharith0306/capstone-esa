@@ -8,7 +8,7 @@ from dataclasses import dataclass
 COMPONENTS = [
     ("A", "anomaly", 0.20, "Isolation Forest anomaly (ECDF vs. normal activity)"),
     ("P", "attack_probability", 0.25, "Classifier attack probability or rule confidence"),
-    ("C", "correlation", 0.20, "Strength of cross-layer alert correlation"),
+    ("C", "correlation", 0.20, "Cross-layer correlation strength × mean attack evidence of linked alerts"),
     ("S", "sequence_severity", 0.15, "Kill-chain progress decoded by the HMM"),
     ("T", "threat_intel", 0.10, "External threat intelligence (GuardDuty severity)"),
     ("D", "resource_sensitivity", 0.10, "Sensitivity of the most sensitive resource involved"),

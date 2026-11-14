@@ -13,6 +13,7 @@ import pandas as pd
 from app.analysis.alerts import Alert, model_alerts, rule_alerts
 from app.analysis.correlation import CorrelationConfig, correlate, dominant_class
 from app.analysis.forensics import build_attack_graph, build_timeline, mitre_summary
+from app.analysis.inventory import Inventory
 from app.analysis.risk import RiskInputs, compute_risk
 from app.analysis.sensitivity import resource_sensitivity
 from app.ml.explain import FEATURE_DESCRIPTIONS, Explainer
@@ -93,6 +94,8 @@ class AnalysisEngine:
         windows = windows.assign(anomaly_score=anomaly, attack_probability=1 - proba[:, 0],
                                  predicted_class=[self.bundle.classes[i] for i in proba.argmax(1)])
         alerts = model_alerts(windows, anomaly, proba, self.bundle.version, cfg.attack_threshold, cfg.anomaly_threshold)
+        for alert in alerts:
+            alert.model_input = {k: round(float(v), 6) for k, v in X.iloc[alert.window_index].items()}
         if self.explainer and alerts:
             idx = [a.window_index for a in alerts]
             classes = [self.bundle.classes.index(a.predicted_class) for a in alerts]
@@ -100,8 +103,9 @@ class AnalysisEngine:
                 alert.explanation = expl
         return windows, alerts + rule_alerts(rows, score_from)
 
-    def analyze(self, events: list[SecurityEvent], score_from: datetime | None = None) -> AnalysisResult:
-        rows = to_rows(events)
+    def analyze(self, events: list[SecurityEvent], score_from: datetime | None = None,
+                inventory: Inventory | None = None) -> AnalysisResult:
+        rows = to_rows(events, inventory)
         windows, alerts = self.detect(rows, score_from)
         groups = correlate(alerts, self.config.correlation)
         events_by_id = {e.event_id: e for e in events}
@@ -127,7 +131,10 @@ class AnalysisEngine:
         risk = compute_risk(RiskInputs(
             anomaly=max((a.anomaly_score for a in model), default=0.0),
             attack_probability=max((a.attack_probability for a in alerts), default=0.0),
-            correlation=group.correlation_score,
+            # Correlation counts as evidence only in proportion to how attack-like the linked alerts are
+            # (chosen on the seed-8 tuning organisation: benign multi-window activity such as bulk
+            # exports correlates strongly but is weak attack evidence).
+            correlation=group.correlation_score * (sum(a.attack_probability for a in alerts) / len(alerts)),
             sequence_severity=seq_severity,
             threat_intel=max((r.severity for r in rows if r.source == "guardduty"), default=0.0),
             resource_sensitivity=max((resource_sensitivity(r.resource_key, r.resource_type) for r in rows), default=0.0),
