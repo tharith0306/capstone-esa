@@ -5,7 +5,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_response_service, get_settings_dep
+from app.api.deps import get_db, get_response_service, get_settings_dep, require_role
+from app.core.security import role_at_least
+from app.services.auth import Principal
 from app.core.config import Settings
 from app.database.models import AuditLog, IncidentRecord, ResponseActionRecord
 from app.services.response import ResponseService, WorkflowError
@@ -17,13 +19,13 @@ Service = Annotated[ResponseService, Depends(get_response_service)]
 
 
 class Decision(BaseModel):
-    analyst: str = Field(min_length=1, max_length=120)
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=2000)
 
 
 @router.get("/mode")
 def response_mode(settings: Annotated[Settings, Depends(get_settings_dep)]) -> dict:
-    return {"mode": settings.response_mode, "responder_profile_configured": bool(settings.responder_profile)}
+    return {"mode": settings.response_mode, "responder_profile_configured": bool(settings.responder_profile),
+            "two_person_rule": settings.response_mode == "live" and settings.require_two_person_live}
 
 
 @router.get("/actions")
@@ -50,24 +52,36 @@ def _call(fn, *args, **kwargs) -> dict:
         raise HTTPException(409, str(exc))
 
 
+Analyst = Annotated[Principal, Depends(require_role("analyst"))]
+
+
+def _executor_allowed(user: Principal, settings: Settings) -> None:
+    if settings.response_mode == "live" and not role_at_least(user.role, "admin"):
+        raise HTTPException(403, "live execution requires the admin role")
+
+
 @router.post("/actions/{action_id}/approve")
-def approve(action_id: str, body: Decision, service: Service) -> dict:
-    return _call(service.decide, action_id, body.analyst, True, body.note)
+def approve(action_id: str, body: Decision, service: Service, user: Analyst) -> dict:
+    return _call(service.decide, action_id, user.username, True, body.note)
 
 
 @router.post("/actions/{action_id}/reject")
-def reject(action_id: str, body: Decision, service: Service) -> dict:
-    return _call(service.decide, action_id, body.analyst, False, body.note)
+def reject(action_id: str, body: Decision, service: Service, user: Analyst) -> dict:
+    return _call(service.decide, action_id, user.username, False, body.note)
 
 
 @router.post("/actions/{action_id}/execute")
-def execute(action_id: str, body: Decision, service: Service) -> dict:
-    return _call(service.execute, action_id, body.analyst)
+def execute(action_id: str, service: Service, user: Analyst,
+            settings: Annotated[Settings, Depends(get_settings_dep)]) -> dict:
+    _executor_allowed(user, settings)
+    return _call(service.execute, action_id, user.username)
 
 
 @router.post("/actions/{action_id}/rollback")
-def rollback(action_id: str, body: Decision, service: Service) -> dict:
-    return _call(service.execute, action_id, body.analyst, rollback=True)
+def rollback(action_id: str, service: Service, user: Analyst,
+             settings: Annotated[Settings, Depends(get_settings_dep)]) -> dict:
+    _executor_allowed(user, settings)
+    return _call(service.execute, action_id, user.username, rollback=True)
 
 
 @router.get("/audit")

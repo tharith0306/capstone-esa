@@ -3,12 +3,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_ingestion_service, get_registry, get_settings_dep
+from app.api.deps import get_db, get_ingestion_service, get_registry, get_settings_dep, require_role
 from app.core.config import Settings
 from app.database.models import (
     AnalysisRun,
@@ -131,12 +131,13 @@ class SimulationRequest(BaseModel):
     attacks_per_day: float = 1.5
 
 
-@router.post("/simulation/run")
-def run_simulation(body: SimulationRequest,
+@router.post("/simulation/run", dependencies=[Depends(require_role("admin"))])
+def run_simulation(body: SimulationRequest, request: Request,
                    settings: Annotated[Settings, Depends(get_settings_dep)],
                    ingestion: Annotated[IngestionService, Depends(get_ingestion_service)]) -> dict:
     if not settings.enable_simulation:
         raise HTTPException(403, "simulation is disabled (CLOUDSHIELD_ENABLE_SIMULATION=false)")
     if not 1 <= body.days <= 30 or not 0 <= body.attacks_per_day <= 10:
         raise HTTPException(422, "days must be 1-30 and attacks_per_day 0-10")
-    return seed_demo(ingestion, settings.reports_dir, body.seed, body.days, body.attacks_per_day)
+    return seed_demo(ingestion, settings.reports_dir, body.seed, body.days, body.attacks_per_day,
+                     session_factory=request.app.state.session_factory)

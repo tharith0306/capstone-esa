@@ -11,6 +11,9 @@ class EventSource(str, Enum):
     CLOUDTRAIL = "cloudtrail"
     VPC_FLOW = "vpc_flow"
     GUARDDUTY = "guardduty"
+    CLOUDWATCH = "cloudwatch"
+    AZURE_ACTIVITY = "azure_activity"
+    GCP_AUDIT = "gcp_audit"
 
 
 class Layer(str, Enum):

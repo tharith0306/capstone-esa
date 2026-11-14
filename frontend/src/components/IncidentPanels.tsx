@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { post, type Incident, type ResponseAction, type TimelineItem } from "../api";
-import { Badge, LAYER_COLOR, STAGE_COLOR, StatusBadge, fmtTime, fmtTimeShort, human, pct, useAnalyst } from "./ui";
+import { get, post, type Incident, type ResponseAction, type TimelineItem } from "../api";
+import { Badge, LAYER_COLOR, STAGE_COLOR, StatusBadge, canAct, fmtTime, fmtTimeShort, human, pct, useUser } from "./ui";
 
 const tooltipStyle = { background: "#0f172a", border: "1px solid #334155", borderRadius: 8, fontSize: 12 };
 
@@ -99,7 +99,8 @@ export function Timeline({ items, onlyAttack }: { items: TimelineItem[]; onlyAtt
 }
 
 export function ActionsPanel({ actions, onChange }: { actions: ResponseAction[]; onChange: () => void }) {
-  const [analyst] = useAnalyst();
+  const user = useUser();
+  const mayAct = canAct(user, "analyst");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,7 +109,7 @@ export function ActionsPanel({ actions, onChange }: { actions: ResponseAction[];
     setBusy(a.action_id + verb);
     setError(null);
     try {
-      await post(`/api/response/actions/${a.action_id}/${verb}`, { analyst, note: verb === "approve" ? "approved from incident view" : undefined });
+      await post(`/api/response/actions/${a.action_id}/${verb}`, verb === "approve" || verb === "reject" ? { note: `${verb}d from the dashboard` } : {});
       onChange();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -131,12 +132,12 @@ export function ActionsPanel({ actions, onChange }: { actions: ResponseAction[];
             </div>
             <div className="flex items-center gap-2">
               <StatusBadge status={a.status} />
-              {a.status === "proposed" && <>
+              {mayAct && a.status === "proposed" && <>
                 <button className="btn-ghost py-1" disabled={!!busy} onClick={() => run(a, "reject")}>Reject</button>
                 <button className="btn-primary py-1" disabled={!!busy} onClick={() => run(a, "approve")}>Approve</button>
               </>}
-              {a.status === "approved" && a.automatable && <button className="btn-danger py-1" disabled={!!busy} onClick={() => run(a, "execute")}>Execute</button>}
-              {a.status === "executed" && a.reversible && <button className="btn-ghost py-1" disabled={!!busy} onClick={() => run(a, "rollback")}>Roll back</button>}
+              {mayAct && a.status === "approved" && a.automatable && <button className="btn-danger py-1" disabled={!!busy} onClick={() => run(a, "execute")}>Execute</button>}
+              {mayAct && a.status === "executed" && a.reversible && <button className="btn-ghost py-1" disabled={!!busy} onClick={() => run(a, "rollback")}>Roll back</button>}
             </div>
           </div>
           {(a.decided_by || a.execution) && (
@@ -147,6 +148,79 @@ export function ActionsPanel({ actions, onChange }: { actions: ResponseAction[];
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+interface LimeResult { explained_class: string; local_r2: number; features: { feature: string; description: string; condition: string; weight: number }[]; note: string }
+interface CounterfactualResult {
+  original_attack_probability: number; constraint: string; note: string;
+  counterfactuals: { attack_probability: number; changes: { feature: string; description: string; from: number; to: number }[] }[];
+}
+
+export function WhatIfPanel({ incidentId }: { incidentId: string }) {
+  const [lime, setLime] = useState<LimeResult | null>(null);
+  const [cf, setCf] = useState<CounterfactualResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setBusy(true);
+    setError(null);
+    try {
+      const [l, c] = await Promise.all([
+        get<LimeResult>(`/api/forensics/${incidentId}/lime`),
+        get<CounterfactualResult>(`/api/forensics/${incidentId}/counterfactual`),
+      ]);
+      setLime(l);
+      setCf(c);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!lime && !cf) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-slate-400">LIME fits a local linear surrogate around the highest-scoring window; DiCE searches for the smallest
+          reductions of the observed activity that the model would call normal.</p>
+        <button className="btn-primary" onClick={load} disabled={busy}>{busy ? "Computing…" : "Compute LIME + counterfactuals"}</button>
+        {error && <p className="text-sm text-rose-300">{error}</p>}
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {lime && (
+        <div>
+          <div className="mb-2 text-sm">LIME for <b>{human(lime.explained_class)}</b> <span className="text-xs text-slate-500">(local R² {lime.local_r2})</span></div>
+          <table className="w-full"><thead><tr><th className="th">Condition</th><th className="th">Weight</th></tr></thead>
+            <tbody>{lime.features.map((f) => (
+              <tr key={f.condition} className="border-t border-slate-800">
+                <td className="td"><div>{f.description || f.feature}</div><div className="mono text-slate-500">{f.condition}</div></td>
+                <td className={`td ${f.weight >= 0 ? "text-rose-300" : "text-sky-300"}`}>{f.weight >= 0 ? "+" : ""}{f.weight.toFixed(3)}</td>
+              </tr>))}
+            </tbody></table>
+          <p className="mt-2 text-xs text-slate-500">{lime.note}</p>
+        </div>
+      )}
+      {cf && (
+        <div>
+          <div className="mb-2 text-sm">Counterfactuals (DiCE) · current attack probability <b>{pct(cf.original_attack_probability, 1)}</b></div>
+          {cf.counterfactuals.length === 0 && <p className="text-sm text-slate-500">No counterfactual found within the allowed changes.</p>}
+          <div className="space-y-2">{cf.counterfactuals.map((c, i) => (
+            <div key={i} className="rounded-lg border border-slate-800 p-2 text-sm">
+              <div className="mb-1 text-xs text-slate-400">Option {i + 1}: attack probability would be {pct(c.attack_probability, 1)}</div>
+              <ul className="space-y-0.5">{c.changes.map((ch) => (
+                <li key={ch.feature}>{ch.description || ch.feature}: <span className="text-rose-300">{ch.from}</span> → <span className="text-emerald-300">{ch.to}</span></li>))}
+              </ul>
+            </div>))}
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Constraint: {cf.constraint}. {cf.note}</p>
+        </div>
+      )}
     </div>
   );
 }

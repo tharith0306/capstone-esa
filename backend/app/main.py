@@ -1,15 +1,17 @@
 """FastAPI entry point. Run with: uvicorn app.main:create_app --factory --reload"""
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import analysis, dashboard, events, health, incidents, response
+from app.api import analysis, auth, cloud, dashboard, events, forensics, health, incidents, response
+from app.api.deps import current_user
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.database.session import create_engine_from_url, create_session_factory, init_db
 from app.evidence.store import build_evidence_store
 from app.services.analysis import AnalysisService
+from app.services.auth import AuthService
 from app.services.ingestion import IngestionService
 from app.services.models_registry import ModelRegistry
 from app.services.response import ResponseService
@@ -34,6 +36,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ingestion = IngestionService(session_factory, evidence_store)
     app.state.analysis = AnalysisService(session_factory, settings, registry)
     app.state.response = ResponseService(session_factory, settings)
+    app.state.auth = AuthService(session_factory, settings)
+    if settings.auth_enabled:
+        app.state.auth.bootstrap_admin()
 
     app.add_middleware(
         CORSMiddleware,
@@ -41,6 +46,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for module in (health, events, analysis, incidents, response, dashboard):
-        app.include_router(module.router)
+    app.include_router(health.router)
+    app.include_router(auth.router)
+    for module in (events, analysis, incidents, forensics, response, dashboard, cloud):
+        app.include_router(module.router, dependencies=[Depends(current_user)])
     return app

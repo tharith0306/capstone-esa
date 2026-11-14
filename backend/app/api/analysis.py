@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_analysis_service, get_db
+from app.api.deps import get_analysis_service, get_db, require_role
+from app.services.auth import Principal
 from app.database.models import AnalysisRun, DetectionRecord
 from app.services.analysis import AnalysisService
 from app.services.serialize import row_to_dict
@@ -18,12 +19,12 @@ DB = Annotated[Session, Depends(get_db)]
 class RunRequest(BaseModel):
     start: datetime | None = None
     end: datetime | None = None
-    analyst: str = "dashboard"
 
 
 @router.post("/analysis/run")
-def run_analysis(body: RunRequest, service: Annotated[AnalysisService, Depends(get_analysis_service)]) -> dict:
-    return service.run(body.start, body.end, actor=body.analyst)
+def run_analysis(body: RunRequest, service: Annotated[AnalysisService, Depends(get_analysis_service)],
+                 user: Annotated[Principal, Depends(require_role("analyst"))]) -> dict:
+    return service.submit(body.start, body.end, actor=user.username)
 
 
 @router.get("/analysis/runs")

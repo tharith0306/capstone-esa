@@ -34,7 +34,7 @@ def load_records(path: str | Path, source: EventSource) -> list[dict[str, Any]]:
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            for key in ("Records", "Findings", "records"):  # CloudTrail S3 file, GetFindings dump
+            for key in ("Records", "Findings", "records", "entries"):  # CloudTrail S3 file, GetFindings dump
                 if isinstance(data.get(key), list):
                     return data[key]
             return [data]

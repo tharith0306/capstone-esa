@@ -1,5 +1,5 @@
-import { ReactNode, useCallback, useEffect, useState } from "react";
-import type { Level } from "../api";
+import { ReactNode, createContext, useCallback, useContext, useEffect, useState } from "react";
+import type { Level, SessionUser } from "../api";
 
 export const LEVEL_STYLE: Record<string, string> = {
   CRITICAL: "bg-rose-500/15 text-rose-300 ring-rose-500/40",
@@ -131,21 +131,7 @@ export const bytes = (n: number) => {
   return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 };
 
-export function useAnalyst(): [string, (v: string) => void] {
-  const [name, setName] = useState<string>(() => {
-    try {
-      return localStorage.getItem("cloudshield.analyst") ?? "analyst";
-    } catch {
-      return "analyst";
-    }
-  });
-  const update = (v: string) => {
-    setName(v);
-    try {
-      localStorage.setItem("cloudshield.analyst", v);
-    } catch {
-      /* storage unavailable */
-    }
-  };
-  return [name, update];
-}
+export const UserContext = createContext<SessionUser | null>(null);
+export const useUser = () => useContext(UserContext);
+export const canAct = (user: SessionUser | null, minimum: "analyst" | "admin") =>
+  !!user && (user.role === "admin" || (minimum === "analyst" && user.role === "analyst"));

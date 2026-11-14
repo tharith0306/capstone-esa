@@ -71,6 +71,7 @@ class NormalActivity:
                     self._session(p, start, weekday)
         for inst in self.env.instances:
             self._instance_flows(inst, day)
+            self._instance_metrics(inst, day)
 
     def _session_starts(self, p: Principal, day: datetime, weekday: bool) -> list[datetime]:
         if not weekday and self.rng.random() > 0.12:
@@ -259,6 +260,17 @@ class NormalActivity:
             later = t + timedelta(minutes=self.rng.randint(15, 60))
             self._ct(later, self.f.api(later, p, "TerminateInstances", EC2, ip=ip, key=p.access_key,
                                        params={"instancesSet": {"items": [{"instanceId": i} for i in instances]}}))
+
+    def _instance_metrics(self, inst, day: datetime) -> None:
+        batch_hour = self.rng.randint(16, 22) if self.rng.random() < 0.15 else None  # nightly batch job
+        for step in range(144):  # 10-minute CloudWatch datapoints
+            ts = day + timedelta(minutes=10 * step)
+            hour = ts.hour
+            value = self.rng.uniform(20, 45) if 4 <= hour <= 14 else self.rng.uniform(4, 20)
+            if batch_hour is not None and hour == batch_hour:
+                value = self.rng.uniform(82, 97)  # legitimate CPU spike: overlap with cryptomining
+            self.out.append(SimRecord(EventSource.CLOUDWATCH,
+                                      self.f.metric(ts, inst.instance_id, value, inst.private_ip), NORMAL, ts))
 
     def _instance_flows(self, inst, day: datetime) -> None:
         for hour in range(24):

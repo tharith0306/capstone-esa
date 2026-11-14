@@ -10,9 +10,13 @@ from app.simulation.generator import generate_dataset
 
 
 def seed_demo(ingestion: IngestionService, reports_dir: str, seed: int = 2026, days: int = 7,
-              attacks_per_day: float = 1.5, start: datetime | None = None) -> dict:
+              attacks_per_day: float = 1.5, start: datetime | None = None, session_factory=None) -> dict:
     dataset = generate_dataset(seed=seed, days=days, attacks_per_day=attacks_per_day, warmup_days=2,
                                stealthy_fraction=0.15, start=start)
+    if session_factory is not None:
+        from app.services.inventory import save_inventory
+
+        save_inventory(session_factory, dataset.inventory, "simulation")
     results = {}
     for source, records in dataset.by_source().items():
         if records:

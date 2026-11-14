@@ -9,7 +9,7 @@ from app.processing.normalizers import NormalizationError, SkipRecord, get_norma
 from app.schemas.event import EventSource, EvidenceRef, SecurityEvent
 from app.simulation.attacks import SCENARIOS, AttackBuilder, ScenarioInfo
 from app.simulation.builders import Label, RecordFactory, SimRecord
-from app.simulation.environment import attacker_ip, build_environment
+from app.simulation.environment import BUCKETS, attacker_ip, build_environment
 from app.simulation.normal import NormalActivity
 
 
@@ -21,6 +21,7 @@ class SimulatedDataset:
     warmup_days: int
     records: list[SimRecord]
     scenarios: list[ScenarioInfo]
+    inventory: list[dict]
 
     def by_source(self) -> dict[EventSource, list[dict]]:
         grouped: dict[EventSource, list[dict]] = {s: [] for s in EventSource}
@@ -69,7 +70,15 @@ def generate_dataset(
         scenarios.append(info)
 
     records.sort(key=lambda r: r.timestamp)
-    return SimulatedDataset(seed, start, start + timedelta(days=days), warmup_days, records, scenarios)
+    inventory = [{"resource_id": i.instance_id, "resource_type": "ec2_instance", "region": env.region,
+                  "attributes": {"enis": [i.eni], "private_ips": [i.private_ip], "security_groups": [i.security_group],
+                                 "instance_type": "t3.large"}} for i in env.instances]
+    inventory += [{"resource_id": f"arn:aws:s3:::{b}", "resource_type": "s3_bucket", "region": env.region,
+                   "attributes": {}} for b in BUCKETS]
+    inventory += [{"resource_id": p.name, "resource_type": "iam_user", "attributes": {"kind": p.kind}}
+                  for p in env.principals if p.identity_type == "IAMUser"]
+    inventory += builder.inventory
+    return SimulatedDataset(seed, start, start + timedelta(days=days), warmup_days, records, scenarios, inventory)
 
 
 def normalize_dataset(dataset: SimulatedDataset) -> tuple[list[SecurityEvent], dict[str, Label]]:

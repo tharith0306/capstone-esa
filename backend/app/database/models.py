@@ -233,3 +233,43 @@ class AuditLog(Base):
     object_type: Mapped[str] = mapped_column(String(32))
     object_id: Mapped[str] = mapped_column(String(64), index=True)
     details: Mapped[dict] = mapped_column(JSONType, default=dict)
+
+
+# ---------------------------------------------------------------- users & inventory
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    role: Mapped[str] = mapped_column(String(16), default="analyst")  # viewer | analyst | admin
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RevokedToken(Base):
+    __tablename__ = "revoked_tokens"
+
+    jti: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CloudResource(Base):
+    """Asset inventory (EC2 instances with their ENIs/IPs, buckets, IAM users). Used to enrich network
+    flows with the instance they belong to, which links flow-level alerts to API-level alerts."""
+
+    __tablename__ = "cloud_resources"
+
+    resource_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    resource_type: Mapped[str] = mapped_column(String(48), index=True)
+    cloud_provider: Mapped[str] = mapped_column(String(16), default="aws")
+    account_id: Mapped[str | None] = mapped_column(String(32))
+    region: Mapped[str | None] = mapped_column(String(32))
+    name: Mapped[str | None] = mapped_column(String(256))
+    attributes: Mapped[dict] = mapped_column(JSONType, default=dict)
+    source: Mapped[str] = mapped_column(String(32), default="inventory")
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

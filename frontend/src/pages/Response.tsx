@@ -6,7 +6,7 @@ import { ErrorBox, Loading, RiskBadge, Section, fmtTime, useApi } from "../compo
 
 export default function Response() {
   const [status, setStatus] = useState("proposed");
-  const mode = useApi(() => get<{ mode: string; responder_profile_configured: boolean }>("/api/response/mode"));
+  const mode = useApi(() => get<{ mode: string; responder_profile_configured: boolean; two_person_rule: boolean }>("/api/response/mode"));
   const actions = useApi(() => get<ResponseAction[]>("/api/response/actions", { status }), [status]);
   const audit = useApi(() => get<AuditEntry[]>("/api/response/audit", { limit: 100 }));
   const reload = () => { actions.reload(); audit.reload(); };
@@ -26,6 +26,7 @@ export default function Response() {
         {mode.data && (
           <div className={`rounded-lg border px-3 py-2 text-sm ${mode.data.mode === "live" ? "border-rose-500/50 bg-rose-500/10 text-rose-200" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"}`}>
             Execution mode: <b>{mode.data.mode === "live" ? "LIVE (AWS API calls are sent)" : "dry run (no AWS calls)"}</b>
+            {mode.data.two_person_rule && <span className="ml-2 text-xs">· two-person rule: executor ≠ approver</span>}
           </div>
         )}
       </div>
