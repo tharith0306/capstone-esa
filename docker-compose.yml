@@ -22,17 +22,39 @@ services:
       CLOUDSHIELD_DATABASE_URL: postgresql+psycopg://cloudshield:cloudshield@postgres:5432/cloudshield
       CLOUDSHIELD_EVIDENCE_BACKEND: local
       CLOUDSHIELD_EVIDENCE_DIR: /data/evidence
+      CLOUDSHIELD_MODEL_DIR: /data/models
+      CLOUDSHIELD_REPORTS_DIR: /reports
+      CLOUDSHIELD_SEED_DEMO: ${CLOUDSHIELD_SEED_DEMO:-true}
+      CLOUDSHIELD_RESPONSE_MODE: dry_run
+      CLOUDSHIELD_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
       CLOUDSHIELD_AWS_REGION: ${CLOUDSHIELD_AWS_REGION:-ap-south-1}
       CLOUDSHIELD_AWS_PROFILE: ${CLOUDSHIELD_AWS_PROFILE:-}
     volumes:
       - evidence:/data/evidence
+      - models:/data/models
+      - ./ml_training/reports:/reports
       - ${HOME}/.aws:/root/.aws:ro
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
   evidence:
+  models:

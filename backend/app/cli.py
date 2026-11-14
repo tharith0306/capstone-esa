@@ -83,6 +83,59 @@ def cmd_collect(settings: Settings, args: argparse.Namespace) -> None:
         set_checkpoint(session, collector.name, cursor)
 
 
+def cmd_train(settings: Settings, args: argparse.Namespace) -> None:
+    from app.ml.training import TrainingConfig, train
+
+    bundle = train(TrainingConfig(seed=args.seed, days=args.days, attacks_per_day=args.attacks_per_day))
+    bundle.save(settings.model_dir)
+    v = bundle.metadata["validation"]
+    print(f"saved model bundle {bundle.version} to {settings.model_dir}")
+    print(f"validation: XGBoost macro-F1={v['xgboost']['macro_f1']} binary={v['xgboost']['binary']}")
+    print(f"            RandomForest macro-F1={v['random_forest']['macro_f1']}; "
+          f"IsolationForest={v['isolation_forest']['binary']}")
+
+
+def cmd_simulate(settings: Settings, args: argparse.Namespace) -> None:
+    from app.services.simulation import seed_demo
+
+    session_factory, ingestion = _build(settings)
+    if args.if_empty:
+        from sqlalchemy import func, select
+
+        from app.database.models import SecurityEventRecord
+
+        with session_factory() as session:
+            if session.scalar(select(func.count()).select_from(SecurityEventRecord)):
+                print("database already has events; skipping demo seeding")
+                return
+    start = parse_timestamp(args.start) if args.start else None
+    result = seed_demo(ingestion, settings.reports_dir, args.seed, args.days, args.attacks_per_day, start)
+    print(json.dumps({k: v for k, v in result.items() if k != "scenarios"}, indent=2))
+    for s in result["scenarios"]:
+        print(f"  {s['scenario_id']}  {s['kind']:26s} victim={s['victim']:16s} {s['start'][:16]}"
+              f"{'  (stealthy)' if s['stealthy'] else ''}")
+    if args.analyze:
+        cmd_analyze(settings, argparse.Namespace(since=None, until=None))
+
+
+def cmd_analyze(settings: Settings, args: argparse.Namespace) -> None:
+    from app.services.analysis import AnalysisService
+    from app.services.models_registry import ModelRegistry
+
+    session_factory, _ = _build(settings)
+    service = AnalysisService(session_factory, settings, ModelRegistry(settings))
+    start = parse_timestamp(args.since) if args.since else None
+    end = parse_timestamp(args.until) if args.until else None
+    print(json.dumps(service.run(start, end, actor="cli"), indent=2, default=str))
+
+
+def cmd_experiments(settings: Settings, args: argparse.Namespace) -> None:
+    from app.experiments.runner import run_experiments
+
+    report = run_experiments(settings, quick=args.quick)
+    print(f"wrote {report['paths']['markdown']} and {report['paths']['json']}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="cloudshield")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -99,10 +152,34 @@ def main(argv: list[str] | None = None) -> None:
     p_collect.add_argument("--until", help="ISO-8601 end; defaults to now")
     p_collect.add_argument("--log-group", help="CloudWatch Logs group (vpc_flow only)")
 
+    p_train = sub.add_parser("train", help="train IF / XGBoost / RF / HMM on simulated labelled data")
+    p_train.add_argument("--seed", type=int, default=7)
+    p_train.add_argument("--days", type=int, default=30)
+    p_train.add_argument("--attacks-per-day", type=float, default=6.0)
+
+    p_sim = sub.add_parser("simulate", help="ingest a simulated organisation under attack (demo data)")
+    p_sim.add_argument("--seed", type=int, default=2026)
+    p_sim.add_argument("--days", type=int, default=7)
+    p_sim.add_argument("--attacks-per-day", type=float, default=1.5)
+    p_sim.add_argument("--start", help="ISO date of the first simulated day (default 2026-10-01)")
+    p_sim.add_argument("--if-empty", action="store_true", help="only seed when the database has no events")
+    p_sim.add_argument("--analyze", action="store_true", help="run the analysis pipeline afterwards")
+
+    p_an = sub.add_parser("analyze", help="run detection, correlation, risk and forensics over stored events")
+    p_an.add_argument("--since")
+    p_an.add_argument("--until")
+
+    p_exp = sub.add_parser("experiments", help="run the research experiments and write a report")
+    p_exp.add_argument("--quick", action="store_true", help="smaller datasets (for CI / smoke tests)")
+
     args = parser.parse_args(argv)
     settings = get_settings()
     configure_logging(settings.log_level)
-    {"init-db": cmd_init_db, "ingest-file": cmd_ingest_file, "collect": cmd_collect}[args.command](settings, args)
+    commands = {
+        "init-db": cmd_init_db, "ingest-file": cmd_ingest_file, "collect": cmd_collect, "train": cmd_train,
+        "simulate": cmd_simulate, "analyze": cmd_analyze, "experiments": cmd_experiments,
+    }
+    commands[args.command](settings, args)
 
 
 if __name__ == "__main__":
