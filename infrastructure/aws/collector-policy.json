@@ -1,0 +1,38 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudTrailRead",
+      "Effect": "Allow",
+      "Action": ["cloudtrail:LookupEvents", "cloudtrail:GetTrailStatus", "cloudtrail:DescribeTrails"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VpcFlowLogsRead",
+      "Effect": "Allow",
+      "Action": ["logs:FilterLogEvents"],
+      "Resource": "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/cloudshield/vpc-flow:*"
+    },
+    {
+      "Sid": "GuardDutyRead",
+      "Effect": "Allow",
+      "Action": ["guardduty:ListDetectors", "guardduty:ListFindings", "guardduty:GetFindings"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TrailFilesRead",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::cloudshield-trail-ACCOUNT_ID",
+        "arn:aws:s3:::cloudshield-trail-ACCOUNT_ID/*"
+      ]
+    },
+    {
+      "Sid": "EvidenceStore",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": "arn:aws:s3:::cloudshield-evidence-ACCOUNT_ID/raw-events/*"
+    }
+  ]
+}

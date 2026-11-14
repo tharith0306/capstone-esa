@@ -1,0 +1,39 @@
+{
+  "_comment": "Synthetic GuardDuty finding matching the 'bob' compromise in cloudtrail_credential_compromise.json.",
+  "Findings": [
+    {
+      "AccountId": "111122223333",
+      "Arn": "arn:aws:guardduty:ap-south-1:111122223333:detector/12abc34d567e8fa901bc2d34e56789f0/finding/6ec9ae0b1e2f3a4b5c6d7e8f90a1b2c3",
+      "CreatedAt": "2026-11-04T10:31:20.000Z",
+      "Description": "APIs commonly used to discover the users, groups, policies and permissions in an account were invoked by IAM principal bob under unusual circumstances.",
+      "Id": "6ec9ae0b1e2f3a4b5c6d7e8f90a1b2c3",
+      "Partition": "aws",
+      "Region": "ap-south-1",
+      "Resource": {
+        "AccessKeyDetails": {"AccessKeyId": "ASIAEXAMPLEBOBCON01", "PrincipalId": "AIDAEXAMPLEBOB00001", "UserName": "bob", "UserType": "IAMUser"},
+        "ResourceType": "AccessKey"
+      },
+      "SchemaVersion": "2.0",
+      "Service": {
+        "Action": {
+          "ActionType": "AWS_API_CALL",
+          "AwsApiCallAction": {
+            "Api": "ConsoleLogin",
+            "CallerType": "Remote IP",
+            "RemoteIpDetails": {"IpAddressV4": "203.0.113.50", "Country": {"CountryName": "Unknown"}},
+            "ServiceName": "signin.amazonaws.com"
+          }
+        },
+        "Count": 1,
+        "DetectorId": "12abc34d567e8fa901bc2d34e56789f0",
+        "EventFirstSeen": "2026-11-04T10:30:00.000Z",
+        "EventLastSeen": "2026-11-04T10:30:00.000Z",
+        "ServiceName": "guardduty"
+      },
+      "Severity": 5,
+      "Title": "Unusual console login was seen for principal bob.",
+      "Type": "UnauthorizedAccess:IAMUser/ConsoleLoginSuccess.B",
+      "UpdatedAt": "2026-11-04T10:31:20.000Z"
+    }
+  ]
+}

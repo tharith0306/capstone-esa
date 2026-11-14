@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local runtime data (SQLite DB, raw evidence copies)
+data/
+*.db
+
+# Secrets
+.env
+.aws/
+
+# Node
+node_modules/
+dist/
+
+# ML artefacts and downloaded datasets
+ml_training/datasets/*
+!ml_training/datasets/.gitkeep
+ml_training/saved_models/*
+!ml_training/saved_models/.gitkeep
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

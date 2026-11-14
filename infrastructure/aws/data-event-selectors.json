@@ -1,0 +1,14 @@
+[
+  {
+    "Name": "All management events",
+    "FieldSelectors": [{"Field": "eventCategory", "Equals": ["Management"]}]
+  },
+  {
+    "Name": "S3 object-level events on the sensitive lab bucket only",
+    "FieldSelectors": [
+      {"Field": "eventCategory", "Equals": ["Data"]},
+      {"Field": "resources.type", "Equals": ["AWS::S3::Object"]},
+      {"Field": "resources.ARN", "StartsWith": ["arn:aws:s3:::cloudshield-lab-customer-data-ACCOUNT_ID/"]}
+    ]
+  }
+]
