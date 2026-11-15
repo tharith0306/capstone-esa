@@ -8,8 +8,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.analysis.alerts import RULE_SEVERITY_THRESHOLD
 from app.analysis.correlation import CorrelationConfig
 from app.analysis.engine import AnalysisConfig, AnalysisEngine, Incident
+from app.analysis.risk import LEVELS
 from app.core.config import Settings
 from app.database.models import (
     AnalysisRun,
@@ -49,6 +51,17 @@ def evidence_manifest(incident: Incident, events_by_id: dict, run_id: str, model
     }
     manifest["manifest_sha256"] = sha256_hex(canonical_json(manifest))
     return manifest
+
+
+def flag_criteria(settings: Settings) -> dict:
+    """The cut-offs detections and incidents are compared against, so clients can show why something was flagged."""
+    return {
+        "attack_probability_threshold": settings.attack_probability_threshold,
+        "anomaly_threshold": settings.anomaly_alert_threshold,
+        "rule_severity_threshold": RULE_SEVERITY_THRESHOLD,
+        "correlation_threshold": settings.correlation_threshold,
+        "risk_levels": [{"level": level, "min": floor} for floor, level in LEVELS],
+    }
 
 
 class AnalysisService:

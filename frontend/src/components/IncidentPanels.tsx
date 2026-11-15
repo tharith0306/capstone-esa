@@ -5,26 +5,6 @@ import { Badge, LAYER_COLOR, STAGE_COLOR, StatusBadge, canAct, fmtTime, fmtTimeS
 
 const tooltipStyle = { background: "#0f172a", border: "1px solid #334155", borderRadius: 8, fontSize: 12 };
 
-export function RiskBreakdown({ risk }: { risk: Incident["risk"] }) {
-  return (
-    <div className="space-y-3">
-      <div className="mono text-slate-400">{risk.formula}</div>
-      {risk.components.map((c) => (
-        <div key={c.symbol}>
-          <div className="flex justify-between text-xs">
-            <span><b className="text-slate-200">{c.symbol}</b> · {c.description}</span>
-            <span className="text-slate-400">{c.value.toFixed(2)} × {c.weight} = <b className="text-slate-100">{c.contribution.toFixed(1)}</b></span>
-          </div>
-          <div className="mt-1 h-2 rounded bg-slate-800">
-            <div className="h-2 rounded bg-gradient-to-r from-sky-500 to-rose-500" style={{ width: `${(c.contribution / (c.weight * 100)) * 100}%` }} />
-          </div>
-        </div>
-      ))}
-      <div className="flex justify-between border-t border-slate-800 pt-2 text-sm"><span>Total</span><b>{risk.score} / 100 · {risk.level}</b></div>
-    </div>
-  );
-}
-
 export function ShapPanel({ explanation }: { explanation: Incident["explanation"] }) {
   if (!explanation.shap) return <p className="text-sm text-slate-500">This incident was raised by rules only (no ML window to explain).</p>;
   const data = explanation.shap.features.map((f) => ({ ...f, name: f.description || f.feature }));

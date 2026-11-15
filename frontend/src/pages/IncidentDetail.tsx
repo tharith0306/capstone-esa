@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { download, get, patch, type Incident } from "../api";
 import AttackGraph from "../components/AttackGraph";
-import { ActionsPanel, RiskBreakdown, ShapPanel, Timeline, WhatIfPanel } from "../components/IncidentPanels";
+import { ActionsPanel, ShapPanel, Timeline, WhatIfPanel } from "../components/IncidentPanels";
+import WhyFlagged, { triggerSummary } from "../components/WhyFlagged";
 import { ErrorBox, Loading, RiskBadge, Section, StatusBadge, canAct, fmtTime, human, pct, useApi, useUser } from "../components/ui";
 
 const TABS = ["Summary", "Timeline", "Explainability", "Attack graph", "Evidence", "Response"] as const;
@@ -59,13 +60,8 @@ export default function IncidentDetail() {
 
       {tab === "Summary" && (
         <div className="grid gap-4 xl:grid-cols-2">
-          <Section title="Explainable risk score"><RiskBreakdown risk={inc.risk} /></Section>
+          <Section title="Why it was flagged" className="xl:col-span-2"><WhyFlagged inc={inc} /></Section>
           <div className="space-y-4">
-            <Section title="Why this is suspicious">
-              <ul className="list-disc space-y-1 pl-4 text-sm">{inc.explanation.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
-              {inc.explanation.reasons.length === 0 && <p className="text-sm text-slate-500">Rule-based incident (see timeline).</p>}
-              <p className="mt-2 text-xs text-slate-500">Top risk drivers: {inc.risk.top_drivers.map(human).join(", ")}</p>
-            </Section>
             <Section title="MITRE ATT&CK techniques">
               <div className="flex flex-wrap gap-2">
                 {inc.mitre.map((m) => (
@@ -76,6 +72,8 @@ export default function IncidentDetail() {
                 ))}
               </div>
             </Section>
+          </div>
+          <div className="space-y-4">
             <Section title="Entities involved">
               <dl className="grid grid-cols-[120px_1fr] gap-y-1 text-sm">
                 <dt className="text-slate-500">Identities</dt><dd className="mono">{inc.actors.join(", ") || "—"}</dd>
@@ -90,11 +88,12 @@ export default function IncidentDetail() {
           </div>
           <Section title="Correlated detections" className="xl:col-span-2">
             <table className="w-full">
-              <thead><tr><th className="th">Window</th><th className="th">Entity</th><th className="th">Class</th><th className="th">Attack p</th><th className="th">Anomaly</th><th className="th">Source</th></tr></thead>
+              <thead><tr><th className="th">Window</th><th className="th">Entity</th><th className="th">Class</th><th className="th">Attack p</th><th className="th">Anomaly</th><th className="th">Source</th><th className="th">Why flagged</th></tr></thead>
               <tbody>{inc.detections.map((d) => (
                 <tr key={d.detection_id} className="border-t border-slate-800">
                   <td className="td text-slate-400">{fmtTime(d.start)}</td><td className="td mono">{d.entity}</td><td className="td">{human(d.predicted_class)}</td>
                   <td className="td">{d.attack_probability.toFixed(2)}</td><td className="td">{d.anomaly_score.toFixed(3)}</td><td className="td">{d.kind === "model" ? "ML" : d.rule}</td>
+                  <td className="td text-xs text-slate-400">{triggerSummary(d, inc.flag_criteria)}</td>
                 </tr>))}
               </tbody>
             </table>
