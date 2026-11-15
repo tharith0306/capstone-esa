@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { get, type Detection } from "../api";
+import { get, type Detection, type FlagCriteria } from "../api";
+import { triggerSummary } from "../components/WhyFlagged";
 import { Badge, ErrorBox, Loading, Section, fmtTime, human, useApi } from "../components/ui";
 
 const CLASSES = ["", "brute_force", "credential_compromise", "reconnaissance", "privilege_escalation", "data_exfiltration", "defense_evasion", "resource_abuse"];
@@ -18,7 +19,7 @@ export default function Detections() {
   const [cls, setCls] = useState("");
   const [kind, setKind] = useState("");
   const { data, error, loading } = useApi(
-    () => get<{ total: number; items: Detection[] }>("/api/detections", { predicted_class: cls, kind, limit: 300 }), [cls, kind]);
+    () => get<{ total: number; items: Detection[]; flag_criteria: FlagCriteria }>("/api/detections", { predicted_class: cls, kind, limit: 300 }), [cls, kind]);
 
   return (
     <div className="space-y-4">
@@ -39,7 +40,7 @@ export default function Detections() {
         <Section title={`${data?.total} detections`}>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead><tr><th className="th">Window</th><th className="th">Entity</th><th className="th">Predicted</th><th className="th">Attack prob (XGBoost)</th><th className="th">Anomaly (IF)</th><th className="th">Source</th><th className="th">Incident</th></tr></thead>
+              <thead><tr><th className="th">Window</th><th className="th">Entity</th><th className="th">Predicted</th><th className="th">Attack prob (XGBoost)</th><th className="th">Anomaly (IF)</th><th className="th">Source</th><th className="th">Why flagged</th><th className="th">Incident</th></tr></thead>
               <tbody>
                 {data?.items.map((d) => (
                   <tr key={d.detection_id} className="border-t border-slate-800 hover:bg-slate-800/40">
@@ -49,6 +50,7 @@ export default function Detections() {
                     <td className="td"><Meter value={d.attack_probability} color="#fb923c" /></td>
                     <td className="td"><Meter value={d.anomaly_score} color="#a78bfa" /></td>
                     <td className="td">{d.kind === "model" ? <Badge className="bg-sky-500/10 text-sky-300 ring-sky-500/30">ML</Badge> : <Badge className="bg-pink-500/10 text-pink-300 ring-pink-500/30">{d.rule}</Badge>}</td>
+                    <td className="td whitespace-nowrap text-xs text-slate-400">{triggerSummary(d, data.flag_criteria)}</td>
                     <td className="td">{d.incident_id && <Link className="mono text-sky-300 hover:underline" to={`/incidents/${d.incident_id}`}>{d.incident_id.slice(0, 12)}…</Link>}</td>
                   </tr>
                 ))}

@@ -6,10 +6,11 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_analysis_service, get_db, require_role
+from app.api.deps import get_analysis_service, get_db, get_settings_dep, require_role
+from app.core.config import Settings
 from app.services.auth import Principal
 from app.database.models import AnalysisRun, DetectionRecord
-from app.services.analysis import AnalysisService
+from app.services.analysis import AnalysisService, flag_criteria
 from app.services.serialize import row_to_dict
 
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -36,6 +37,7 @@ def list_runs(db: DB, limit: Annotated[int, Query(ge=1, le=100)] = 20) -> list[d
 @router.get("/detections")
 def list_detections(
     db: DB,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
     kind: str | None = None,
     predicted_class: str | None = None,
     incident_id: str | None = None,
@@ -55,7 +57,8 @@ def list_detections(
         filters.append(D.score >= min_score)
     total = db.scalar(select(func.count()).select_from(D).where(*filters)) or 0
     rows = db.scalars(select(D).where(*filters).order_by(D.start.desc()).limit(limit).offset(offset))
-    return {"total": total, "items": [row_to_dict(r, exclude={"event_ids", "explanation"}) for r in rows]}
+    return {"total": total, "items": [row_to_dict(r, exclude={"event_ids", "explanation"}) for r in rows],
+            "flag_criteria": flag_criteria(settings)}
 
 
 @router.get("/detections/{detection_id}")

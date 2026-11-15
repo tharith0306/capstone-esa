@@ -45,6 +45,11 @@ def test_incident_detail_has_all_layers(seeded):
     client, _, _ = seeded
     inc_id = client.get("/api/incidents", params={"limit": 1}).json()["items"][0]["incident_id"]
     inc = client.get(f"/api/incidents/{inc_id}").json()
+    criteria = inc["flag_criteria"]
+    assert 0 < criteria["attack_probability_threshold"] < 1
+    assert [lvl["level"] for lvl in criteria["risk_levels"]][0] == "CRITICAL"
+    assert all(d["kind"] == "rule" or d["attack_probability"] >= criteria["attack_probability_threshold"]
+               or d["anomaly_score"] >= criteria["anomaly_threshold"] for d in inc["detections"])
     assert inc["risk"]["formula"].startswith("R = 100")
     assert len(inc["risk"]["components"]) == 6
     assert inc["graph"]["nodes"] and inc["timeline"]

@@ -271,7 +271,16 @@ export interface ResponseAction {
   risk_score?: number;
 }
 
+export interface FlagCriteria {
+  attack_probability_threshold: number;
+  anomaly_threshold: number;
+  rule_severity_threshold: number;
+  correlation_threshold: number;
+  risk_levels: { level: Level; min: number }[];
+}
+
 export interface Incident extends IncidentSummary {
+  flag_criteria: FlagCriteria;
   risk: { score: number; level: Level; formula: string; components: RiskComponent[]; top_drivers: string[] };
   explanation: {
     alert_id: string | null;

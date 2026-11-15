@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_evidence_store, require_role
+from app.api.deps import get_db, get_evidence_store, get_settings_dep, require_role
+from app.core.config import Settings
 from app.services.auth import Principal
 from app.database.models import (
     AuditLog,
@@ -18,6 +19,7 @@ from app.database.models import (
 )
 from app.evidence.store import EvidenceStore
 from app.schemas.event import EvidenceRef
+from app.services.analysis import flag_criteria
 from app.services.audit import audit
 from app.services.serialize import row_to_dict
 
@@ -61,7 +63,13 @@ def list_incidents(
 
 
 @router.get("/{incident_id}")
-def get_incident(incident_id: str, db: DB) -> dict:
+def get_incident(incident_id: str, db: DB, settings: Annotated[Settings, Depends(get_settings_dep)]) -> dict:
+    inc = _incident_detail(db, incident_id)
+    inc["flag_criteria"] = flag_criteria(settings)
+    return inc
+
+
+def _incident_detail(db: Session, incident_id: str) -> dict:
     inc = row_to_dict(_get(db, incident_id))
     inc["detections"] = [row_to_dict(d, exclude={"event_ids"}) for d in db.scalars(
         select(DetectionRecord).where(DetectionRecord.incident_id == incident_id).order_by(DetectionRecord.start))]
@@ -104,7 +112,7 @@ def incident_report(incident_id: str, db: DB, store: Annotated[EvidenceStore, De
         verified = store.verify(EvidenceRef(reference=ev.raw_event_reference, sha256=ev.raw_event_hash))
         verified_count += verified
         events.append({**ev.model_dump(mode="json"), "evidence_verified": verified})
-    report = get_incident(incident_id, db)
+    report = _incident_detail(db, incident_id)
     report["events"] = events
     report["evidence_summary"] = {"events": len(events), "verified": verified_count,
                                   "all_verified": verified_count == len(events)}
